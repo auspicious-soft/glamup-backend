@@ -103,6 +103,11 @@ const userSchema = new mongoose.Schema({
       enum: ["user", "admin"],
       default: "user",
     },
+       businessRole: {
+      type: String,
+      enum: ["owner", "manager", "staff", "member", ""],
+      default: "",
+    },
   },
   {
     timestamps: true,

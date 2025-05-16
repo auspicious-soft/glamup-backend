@@ -6,7 +6,7 @@ import connectDB from "./config/db"
 import bodyParser from 'body-parser'
 import cookieParser from 'cookie-parser'
 
-import {auth} from "./routes"
+import {admin, auth, user} from "./routes"
 
 const __filename = fileURLToPath(import.meta.url) 
 const __dirname = path.dirname(__filename)      
@@ -42,7 +42,8 @@ app.use('/uploads', express.static(uploadsDir))
 connectDB();
 
 app.use('/api', auth);
-
+app.use('/api/user', user);
+app.use('/api/admin', admin);
 app.get("/", (_, res: any) => {
     res.send("Hello world entry point 🚀✅");
 });

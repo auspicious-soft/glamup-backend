@@ -1,59 +1,58 @@
-// import { Request, Response } from 'express';
-import bcrypt from 'bcrypt';
 import { z } from 'zod';
 import User from '../../models/user/userSchema';
 import { httpStatusCode } from '../../lib/constant';
 import { Request, Response } from 'express';
-import jwt from 'jsonwebtoken';
-import { generateOtpWithTwilio } from '../../utils/userAuth/signUpAuth';
-import { sendEmailVerificationMail } from '../../utils/mails/mail';
-import { customAlphabet } from 'nanoid';
-import crypto from 'crypto';
-
-const userSignupSchema = z.object({
-  fullName: z.string().min(1, "Full name is required"),
-  email: z.string().email("Invalid email address"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
-  countryCode: z.string().min(1, "Country code is required"),
-  phoneNumber: z.string().min(1, "Phone number is required"),
-});
+import { errorResponseHandler, errorParser } from '../../lib/errors/error-response-handler';
+import { 
+  findUserByEmailOrPhone, 
+  generateOTP, 
+  generateVerificationToken, 
+  hashPassword, 
+  verifyPassword, 
+  generateJwtToken, 
+  sendOTP, 
+  removeSensitiveData, 
+  successResponse 
+} from '../../utils/userAuth/signUpAuth';
 
 export const userSignUp = async (req: Request, res: Response) => {
   try {
-    const result = userSignupSchema.safeParse(req.body);
-    if (!result.success) {
-      return res.status(httpStatusCode.BAD_REQUEST).json({
-        success: false,
-        message: "Validation failed",
-        errors: result.error.errors,
-      });
-    }
-    const UserData = result.data;
-    const { fullName, email, password, phoneNumber, countryCode } = result.data;
+    const { fullName, email, password, phoneNumber, countryCode } = req.body;
+     const requiredFields = { fullName, email, password, phoneNumber, countryCode };
+    const missingFields = Object.entries(requiredFields)
+      .filter(([_, value]) => !value)
+      .map(([key]) => key);
 
-    const existingUser = await User.findOne({ $or: [{ email }, { phoneNumber }] });
+    if (missingFields.length > 0) {
+      return errorResponseHandler(
+        ` ${missingFields.join(', ')} is Required`,
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return errorResponseHandler("Invalid email format", httpStatusCode.BAD_REQUEST, res);
+    }
+
+    const existingUser = await findUserByEmailOrPhone(email, phoneNumber);
     if (existingUser) {
-      return res.status(httpStatusCode.BAD_REQUEST).json({
-        success: false,
-        message: existingUser.email === email 
-          ? "User with this email already exists" 
-          : "User with this phone number already exists",
-      });
+      const message = existingUser.email === email 
+        ? "User with this email already exists" 
+        : "User with this phone number already exists";
+      return errorResponseHandler(message, httpStatusCode.BAD_REQUEST, res);
     }
 
-    // Generate OTP
-    const genOtp = customAlphabet('0123456789', 6);
-    const otp = genOtp();
-    const otpExpiry = new Date();
-    otpExpiry.setMinutes(otpExpiry.getMinutes() + 10);
-    
-    // Generate verification token
-    const verificationToken = crypto.randomBytes(32).toString('hex');
-    const hashedVerificationToken = await bcrypt.hash(verificationToken, 10);
+    const { otp, otpExpiry } = generateOTP();
+    const { token: verificationToken, hashedToken: hashedVerificationToken } = await generateVerificationToken();
 
     const newUser = await User.create({
-      ...UserData,
-      password: await bcrypt.hash(password, 10),
+      fullName,
+      email,
+      password: await hashPassword(password),
+      phoneNumber,
+      countryCode,
       otp: {
         code: otp, 
         expiresAt: otpExpiry,
@@ -61,36 +60,25 @@ export const userSignUp = async (req: Request, res: Response) => {
       }
     });
 
-    const token = jwt.sign(
-      { id: newUser._id },
-      process.env.AUTH_SECRET as string,
-      { expiresIn: '1d' }
-    );
+    const token = generateJwtToken(newUser._id.toString());
     
     const preferredMethod = req.body.verificationMethod || 'email';
-    if (preferredMethod === 'email') {
-      await sendEmailVerificationMail(email, otp, 'eng');
-    } else {
-      await generateOtpWithTwilio(`${countryCode}${phoneNumber}`, otp);
-    }
+    await sendOTP(email, phoneNumber, countryCode, otp, preferredMethod);
 
-    const { password: _removed, ...userWithoutSensitive } = newUser.toObject();
+    const userWithoutSensitive = removeSensitiveData(newUser);
 
-    return res.status(httpStatusCode.CREATED).json({
-      success: true,
-      message: `User registered successfully. OTP sent to your ${preferredMethod}.`,
-      data: { 
-        ...userWithoutSensitive, 
-        token,
-        verificationToken // Send this to client for OTP verification
-      }
-    });
+    return successResponse(
+      res, 
+      `User registered successfully. OTP sent to your ${preferredMethod}.`,
+      { ...userWithoutSensitive, verificationToken },
+      httpStatusCode.CREATED
+    );
   } catch (error: any) {
     console.error("Signup error:", error);
-    return res.status(httpStatusCode.INTERNAL_SERVER_ERROR).json({
+    const parsedError = errorParser(error);
+    return res.status(parsedError.code).json({
       success: false,
-      message: "Internal server error",
-      error: error.message || "Unexpected error occurred",
+      message: parsedError.message,
     });
   }
 };
@@ -99,61 +87,37 @@ export const UserLogin = async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
     if (!email) {
-      return res.status(httpStatusCode.BAD_REQUEST).json({
-        success: false,
-        message: "Email is required",
-      });
+      return errorResponseHandler("Email is required", httpStatusCode.BAD_REQUEST, res);
     }
-    
-    const user = await User.findOne({ email });
+    const user = await findUserByEmailOrPhone(email);
     if (!user) {
-      return res.status(httpStatusCode.BAD_REQUEST).json({
-        success: false,
-        message: "User not found",
-      });
+      return errorResponseHandler("User not found", httpStatusCode.BAD_REQUEST, res);
     }
-    
+
     if (!user.isVerified) {
-      return res.status(httpStatusCode.BAD_REQUEST).json({
-        success: false,
-        message: "User is not verified",
-      });
+      return errorResponseHandler("User is not verified", httpStatusCode.BAD_REQUEST, res);
     }
     
-    // Compare password using bcrypt
-    const isPasswordValid = await bcrypt.compare(password, user.password);
+    const isPasswordValid = await verifyPassword(password, user.password);
     if (!isPasswordValid) {
-      return res.status(httpStatusCode.BAD_REQUEST).json({
-        success: false,
-        message: "Invalid password",
-      });
+      return errorResponseHandler("Invalid password", httpStatusCode.BAD_REQUEST, res);
     }
     
-    const token = jwt.sign(
-      { id: user._id },
-      process.env.AUTH_SECRET as string,
-      { expiresIn: '1d' }
+    const token = generateJwtToken(user._id.toString());
+
+    const userWithoutSensitive = removeSensitiveData(user);
+
+    return successResponse(
+      res,
+      "User logged in successfully",
+      { ...userWithoutSensitive, token }
     );
-
-  const userObj = user.toObject();
-const { 
-  password: _removedPassword, 
-  otp: _removedOtp, 
-  resetPasswordToken: _removedResetToken, 
-  ...userWithoutSensitive 
-} = userObj;
-
-    return res.status(httpStatusCode.OK).json({
-      success: true,
-      message: "User logged in successfully",
-      data: { ...userWithoutSensitive, token },
-    });
   } catch (error: any) {
     console.error("Login error:", error);
-    return res.status(httpStatusCode.INTERNAL_SERVER_ERROR).json({
+    const parsedError = errorParser(error);
+    return res.status(parsedError.code).json({
       success: false,
-      message: "Internal server error",
-      error: error.message || "Unexpected error occurred",
+      message: parsedError.message,
     });
   }
 };
@@ -162,31 +126,17 @@ export const ResetPassword = async (req: Request, res: Response) => {
   try {
     const { email, phoneNumber, countryCode } = req.body;
     if (!email && !phoneNumber) {
-      return res.status(httpStatusCode.BAD_REQUEST).json({
-        success: false,
-        message: "Email or phone number is required",
-      });
+      return errorResponseHandler("Email or phone number is required", httpStatusCode.BAD_REQUEST, res);
     }
     
-    const user = await User.findOne({ $or: [{ email }, { phoneNumber }] });
+    const user = await findUserByEmailOrPhone(email, phoneNumber);
     if (!user) {
-      return res.status(httpStatusCode.BAD_REQUEST).json({
-        success: false,
-        message: "User not found",
-      });
+      return errorResponseHandler("User not found", httpStatusCode.BAD_REQUEST, res);
     }
     
-    // Generate OTP
-    const genOtp = customAlphabet('0123456789', 6);
-    const otp = genOtp();
-    const otpExpiry = new Date();
-    otpExpiry.setMinutes(otpExpiry.getMinutes() + 10);
-    
-    // Generate reset token
-    const resetToken = crypto.randomBytes(32).toString('hex');
-    const hashedResetToken = await bcrypt.hash(resetToken, 10);
+    const { otp, otpExpiry } = generateOTP();
+    const { token: resetToken, hashedToken: hashedResetToken } = await generateVerificationToken();
 
-    // Update user with OTP and reset token
     await User.findByIdAndUpdate(user._id, {
       otp: { code: otp, expiresAt: otpExpiry },
       resetPasswordToken: {
@@ -196,24 +146,20 @@ export const ResetPassword = async (req: Request, res: Response) => {
     });
 
     const preferredMethod = req.body.verificationMethod || 'email';
-    if (preferredMethod === 'email') {
-      await sendEmailVerificationMail(email, otp, 'eng');
-    } else {
-      await generateOtpWithTwilio(`${countryCode}${phoneNumber}`, otp);
-    }
+    await sendOTP(email, phoneNumber, countryCode, otp, preferredMethod);
 
-    console.log(otp,"OTP")
-    return res.status(httpStatusCode.OK).json({
-      success: true,
-      message: `OTP sent to your ${preferredMethod}.`,
-      data: { resetToken } // Send this to client for OTP verification
-    });
+    console.log(otp, "OTP");
+    return successResponse(
+      res,
+      `OTP sent to your ${preferredMethod}.`,
+      { resetToken }
+    );
   } catch (error: any) {
     console.error("Reset password error:", error);
-    return res.status(httpStatusCode.INTERNAL_SERVER_ERROR).json({
+    const parsedError = errorParser(error);
+    return res.status(parsedError.code).json({
       success: false,
-      message: "Internal server error",
-      error: error.message || "Unexpected error occurred",
+      message: parsedError.message,
     });
   }
 };
@@ -223,40 +169,29 @@ export const verifySignupOTP = async (req: Request, res: Response) => {
     const { otp, phoneNumber, verificationToken } = req.body;
     
     if (!otp || !phoneNumber || !verificationToken) {
-      return res.status(httpStatusCode.BAD_REQUEST).json({
-        success: false,
-        message: "OTP, phone number, and verification token are required",
-      });
+      return errorResponseHandler(
+        "OTP, phone number, and verification token are required", 
+        httpStatusCode.BAD_REQUEST, 
+        res
+      );
     }
 
-    const user = await User.findOne({ phoneNumber });
+    const user = await findUserByEmailOrPhone(undefined, phoneNumber);
     if (!user) {
-      return res.status(httpStatusCode.BAD_REQUEST).json({
-        success: false,
-        message: "User not found",
-      });
+      return errorResponseHandler("User not found", httpStatusCode.BAD_REQUEST, res);
     }
 
     if (!user.otp || !user.otp.expiresAt || new Date() > user.otp.expiresAt) {
-      return res.status(httpStatusCode.BAD_REQUEST).json({
-        success: false,
-        message: "OTP has expired",
-      });
+      return errorResponseHandler("OTP has expired", httpStatusCode.BAD_REQUEST, res);
     }
 
     if (user.otp.code !== otp) {
-      return res.status(httpStatusCode.BAD_REQUEST).json({
-        success: false,
-        message: "Invalid OTP",
-      });
+      return errorResponseHandler("Invalid OTP", httpStatusCode.BAD_REQUEST, res);
     }
 
-    const isTokenValid = await bcrypt.compare(verificationToken, user.otp.verificationToken);
+    const isTokenValid = await verifyPassword(verificationToken, user.otp.verificationToken);
     if (!isTokenValid) {
-      return res.status(httpStatusCode.BAD_REQUEST).json({
-        success: false,
-        message: "Invalid verification token",
-      });
+      return errorResponseHandler("Invalid verification token", httpStatusCode.BAD_REQUEST, res);
     }
 
     await User.findByIdAndUpdate(user._id, {
@@ -268,16 +203,25 @@ export const verifySignupOTP = async (req: Request, res: Response) => {
       }
     });
 
-    return res.status(httpStatusCode.OK).json({
-      success: true,
-      message: "User verified successfully",
-    });
+    const updatedUser = await User.findById(user._id);
+    if (!updatedUser) {
+      return errorResponseHandler("User not found after update", httpStatusCode.INTERNAL_SERVER_ERROR, res);
+    }
+    const token = generateJwtToken(updatedUser._id.toString());
+
+    const userWithoutSensitive = removeSensitiveData(updatedUser);
+
+    return successResponse(
+      res,
+      "User verified successfully",
+      { ...userWithoutSensitive, token }
+    );
   } catch (error: any) {
     console.error("OTP verification error:", error);
-    return res.status(httpStatusCode.INTERNAL_SERVER_ERROR).json({
+    const parsedError = errorParser(error);
+    return res.status(parsedError.code).json({
       success: false,
-      message: "Internal server error",
-      error: error.message || "Unexpected error occurred",
+      message: parsedError.message,
     });
   }
 };
@@ -287,53 +231,35 @@ export const verifyResetPasswordOTP = async (req: Request, res: Response) => {
     const { otp, phoneNumber, resetToken } = req.body;
     
     if (!otp || !phoneNumber || !resetToken) {
-      return res.status(httpStatusCode.BAD_REQUEST).json({
-        success: false,
-        message: "OTP, phone number, and reset token are required",
-      });
+      return errorResponseHandler(
+        "OTP, phone number, and reset token are required", 
+        httpStatusCode.BAD_REQUEST, 
+        res
+      );
     }
 
-    const user = await User.findOne({ phoneNumber });
+    const user = await findUserByEmailOrPhone(undefined, phoneNumber);
     if (!user) {
-      return res.status(httpStatusCode.BAD_REQUEST).json({
-        success: false,
-        message: "User not found",
-      });
+      return errorResponseHandler("User not found", httpStatusCode.BAD_REQUEST, res);
     }
 
-    // Check if OTP is expired
     if (!user.otp || !user.otp.expiresAt || new Date() > user.otp.expiresAt) {
-      return res.status(httpStatusCode.BAD_REQUEST).json({
-        success: false,
-        message: "OTP has expired",
-      });
+      return errorResponseHandler("OTP has expired", httpStatusCode.BAD_REQUEST, res);
     }
 
-    // Verify OTP
     if (user.otp.code !== otp) {
-      return res.status(httpStatusCode.BAD_REQUEST).json({
-        success: false,
-        message: "Invalid OTP",
-      });
+      return errorResponseHandler("Invalid OTP", httpStatusCode.BAD_REQUEST, res);
     }
 
-    // Verify reset token
     if (!user.resetPasswordToken || !user.resetPasswordToken.token) {
-      return res.status(httpStatusCode.BAD_REQUEST).json({
-        success: false,
-        message: "Reset token is invalid or missing",
-      });
+      return errorResponseHandler("Reset token is invalid or missing", httpStatusCode.BAD_REQUEST, res);
     }
-    const isTokenValid = await bcrypt.compare(resetToken, user.resetPasswordToken.token);
+    
+    const isTokenValid = await verifyPassword(resetToken, user.resetPasswordToken.token);
     if (!isTokenValid) {
-      return res.status(httpStatusCode.BAD_REQUEST).json({
-        success: false,
-        message: "Invalid reset token",
-      });
+      return errorResponseHandler("Invalid reset token", httpStatusCode.BAD_REQUEST, res);
     }
 
-    // Clear OTP but keep reset token valid for password update
-    // Set a short expiry for the reset token (e.g., 5 minutes)
     const tokenExpiry = new Date();
     tokenExpiry.setMinutes(tokenExpiry.getMinutes() + 5);
     
@@ -344,49 +270,55 @@ export const verifyResetPasswordOTP = async (req: Request, res: Response) => {
         verificationToken: null
       },
       resetPasswordToken: {
-        token: user.resetPasswordToken?.token || null,
-        expiresAt: tokenExpiry // Update with shorter expiry
+        token: user.resetPasswordToken.token,
+        expiresAt: tokenExpiry
       }
     });
 
-    return res.status(httpStatusCode.OK).json({
-      success: true,
-      message: "OTP verified successfully. You can now reset your password within 5 minutes.",
-      data: { resetToken } // Keep sending the token for the next step
-    });
+    return successResponse(
+      res,
+      "OTP verified successfully. You can now reset your password within 5 minutes.",
+      { resetToken }
+    );
   } catch (error: any) {
     console.error("OTP verification error:", error);
-    return res.status(httpStatusCode.INTERNAL_SERVER_ERROR).json({
+    const parsedError = errorParser(error);
+    return res.status(parsedError.code).json({
       success: false,
-      message: "Internal server error",
-      error: error.message || "Unexpected error occurred",
+      message: parsedError.message,
     });
   }
 };
 
 export const updatePassword = async (req: Request, res: Response) => {
   try {
-    const { phoneNumber, newPassword } = req.body;
+    const { phoneNumber, resetToken, newPassword } = req.body;
     
-    if (!phoneNumber ||  !newPassword) {
-      return res.status(httpStatusCode.BAD_REQUEST).json({
-        success: false,
-        message: "Phone number, reset token, and new password are required",
-      });
+    if (!phoneNumber || !resetToken || !newPassword) {
+      return errorResponseHandler(
+        "Phone number, reset token, and new password are required",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
     }
 
-    const user = await User.findOne({ phoneNumber });
+    const user = await findUserByEmailOrPhone(undefined, phoneNumber);
     if (!user) {
-      return res.status(httpStatusCode.BAD_REQUEST).json({
-        success: false,
-        message: "User not found",
-      });
+      return errorResponseHandler("User not found", httpStatusCode.BAD_REQUEST, res);
     }
 
+    if (!user.resetPasswordToken || !user.resetPasswordToken.expiresAt || 
+        new Date() > user.resetPasswordToken.expiresAt) {
+      return errorResponseHandler("Reset token has expired", httpStatusCode.BAD_REQUEST, res);
+    }
 
-    // Update password and completely clear reset token and OTP
+    const isTokenValid = await verifyPassword(resetToken, user.resetPasswordToken.token);
+    if (!isTokenValid) {
+      return errorResponseHandler("Invalid reset token", httpStatusCode.BAD_REQUEST, res);
+    }
+
     await User.findByIdAndUpdate(user._id, {
-      password: await bcrypt.hash(newPassword, 10),
+      password: await hashPassword(newPassword),
       resetPasswordToken: { 
         token: null, 
         expiresAt: null 
@@ -398,16 +330,13 @@ export const updatePassword = async (req: Request, res: Response) => {
       }
     });
 
-    return res.status(httpStatusCode.OK).json({
-      success: true,
-      message: "Password updated successfully",
-    });
+    return successResponse(res, "Password updated successfully");
   } catch (error: any) {
     console.error("Password update error:", error);
-    return res.status(httpStatusCode.INTERNAL_SERVER_ERROR).json({
+    const parsedError = errorParser(error);
+    return res.status(parsedError.code).json({
       success: false,
-      message: "Internal server error",
-      error: error.message || "Unexpected error occurred",
+      message: parsedError.message,
     });
   }
 };
