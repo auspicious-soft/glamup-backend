@@ -32,32 +32,40 @@ export const authMiddleware = async (req: Request, res: Response, next: NextFunc
       });
     }
     
-    const decoded: any = jwt.verify(token, process.env.AUTH_SECRET || 'your-secret-key');
-    
-    const user = await User.findById(decoded.id).select('-password');
-    
-    if (!user) {
+    try {
+      const decoded: any = jwt.verify(token, process.env.AUTH_SECRET || 'your-secret-key');
+      
+      const user = await User.findById(decoded.id).select('-password');
+      
+      if (!user) {
+        return res.status(httpStatusCode.FORBIDDEN).json({
+          success: false,
+          message: 'Unauthorized user: User not found',
+        });
+      }
+      
+      if (!user.isActive) {
+        return res.status(httpStatusCode.FORBIDDEN).json({
+          success: false,
+          message: 'Unauthorized user: User account is inactive',
+        });
+      }
+      
+      req.user = user;
+      
+      next();
+    } catch (tokenError) {
       return res.status(httpStatusCode.FORBIDDEN).json({
         success: false,
-        message: 'Unauthorized user: User not found',
+        message: 'Unauthorized user: Invalid token',
       });
     }
-    
-    if (!user.isActive) {
-      return res.status(httpStatusCode.FORBIDDEN).json({
-        success: false,
-        message: 'Unauthorized user: User account is inactive',
-      });
-    }
-    
-    req.user = user;
-    
-    next();
   } catch (error) {
     console.error('Auth middleware error:', error);
-    return res.status(httpStatusCode.FORBIDDEN).json({
+    return res.status(httpStatusCode.INTERNAL_SERVER_ERROR).json({
       success: false,
-      message: 'Unauthorized user: Invalid token',
+      message: 'Server error during authentication',
     });
   }
 };
+

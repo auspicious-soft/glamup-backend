@@ -3,6 +3,33 @@ import { customAlphabet } from "nanoid";
 
 const businessId = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 8);
 
+// Define TypeScript interfaces for business hours
+export interface TimeSlot {
+  open: string;
+  close: string;
+}
+
+export interface DaySchedule {
+  isOpen: boolean;
+  timeSlots: TimeSlot[];
+}
+
+export interface BusinessHours {
+  [key: string]: DaySchedule;
+  monday: DaySchedule;
+  tuesday: DaySchedule;
+  wednesday: DaySchedule;
+  thursday: DaySchedule;
+  friday: DaySchedule;
+  saturday: DaySchedule;
+  sunday: DaySchedule;
+}
+
+const timeSlotSchema = new mongoose.Schema({
+  open: { type: String, required: true },
+  close: { type: String, required: true }
+}, { _id: false });
+
 const userBusinessProfileSchema = new mongoose.Schema(
   {
     businessId: {
@@ -33,7 +60,24 @@ const userBusinessProfileSchema = new mongoose.Schema(
       type: String,
       default: "+91",
     },
+    email: {
+      type: String,
+      default: "",
+    },
+    // Social Media Links
     websiteLink: {
+      type: String,
+      default: "",
+    },
+    facebookLink: {
+      type: String,
+      default: "",
+    },
+    instagramLink: {
+      type: String,
+      default: "",
+    },
+    messengerLink: {
       type: String,
       default: "",
     },
@@ -44,7 +88,10 @@ const userBusinessProfileSchema = new mongoose.Schema(
       country: { type: String, default: "" },
       postalCode: { type: String, default: "" },
     },
-
+    country: {
+      type: String,
+      default: "",
+    },
     selectedServices: [{
       serviceId: {
         type: mongoose.Schema.Types.ObjectId,
@@ -61,13 +108,34 @@ const userBusinessProfileSchema = new mongoose.Schema(
       }
     }],
     businessHours: {
-      monday: { open: { type: String, default: "09:00" }, close: { type: String, default: "17:00" }, isOpen: { type: Boolean, default: true } },
-      tuesday: { open: { type: String, default: "09:00" }, close: { type: String, default: "17:00" }, isOpen: { type: Boolean, default: true } },
-      wednesday: { open: { type: String, default: "09:00" }, close: { type: String, default: "17:00" }, isOpen: { type: Boolean, default: true } },
-      thursday: { open: { type: String, default: "09:00" }, close: { type: String, default: "17:00" }, isOpen: { type: Boolean, default: true } },
-      friday: { open: { type: String, default: "09:00" }, close: { type: String, default: "17:00" }, isOpen: { type: Boolean, default: true } },
-      saturday: { open: { type: String, default: "09:00" }, close: { type: String, default: "17:00" }, isOpen: { type: Boolean, default: true } },
-      sunday: { open: { type: String, default: "09:00" }, close: { type: String, default: "17:00" }, isOpen: { type: Boolean, default: false } },
+      monday: { 
+        isOpen: { type: Boolean, default: true },
+        timeSlots: { type: [timeSlotSchema], default: [{ open: "09:00", close: "17:00" }] }
+      },
+      tuesday: { 
+        isOpen: { type: Boolean, default: true },
+        timeSlots: { type: [timeSlotSchema], default: [{ open: "09:00", close: "17:00" }] }
+      },
+      wednesday: { 
+        isOpen: { type: Boolean, default: true },
+        timeSlots: { type: [timeSlotSchema], default: [{ open: "09:00", close: "17:00" }] }
+      },
+      thursday: { 
+        isOpen: { type: Boolean, default: true },
+        timeSlots: { type: [timeSlotSchema], default: [{ open: "09:00", close: "17:00" }] }
+      },
+      friday: { 
+        isOpen: { type: Boolean, default: true },
+        timeSlots: { type: [timeSlotSchema], default: [{ open: "09:00", close: "17:00" }] }
+      },
+      saturday: { 
+        isOpen: { type: Boolean, default: true },
+        timeSlots: { type: [timeSlotSchema], default: [{ open: "09:00", close: "17:00" }] }
+      },
+      sunday: { 
+        isOpen: { type: Boolean, default: false },
+        timeSlots: { type: [timeSlotSchema], default: [{ open: "09:00", close: "17:00" }] }
+      },
     },   
     status: {
       type: String,
@@ -91,3 +159,6 @@ const userBusinessProfileSchema = new mongoose.Schema(
 
 const UserBusinessProfile = mongoose.model("UserBusinessProfile", userBusinessProfileSchema);
 export default UserBusinessProfile;
+
+
+
