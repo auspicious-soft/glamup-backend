@@ -31,7 +31,7 @@ const connectDB = async () => {
     process.exit(1);
   }
 
-  connectWithRetry();
+  await connectWithRetry();
 };
 
 export default connectDB;

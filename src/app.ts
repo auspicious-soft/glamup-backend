@@ -7,6 +7,7 @@ import bodyParser from 'body-parser'
 import cookieParser from 'cookie-parser'
 
 import {admin, auth, user} from "./routes"
+import { authMiddleware } from "middleware/authMiddleware"
 
 const __filename = fileURLToPath(import.meta.url) 
 const __dirname = path.dirname(__filename)      
@@ -42,12 +43,12 @@ app.use('/uploads', express.static(uploadsDir))
 connectDB();
 
 app.use('/api', auth);
-app.use('/api/user', user);
+
+// Protected routes - require authentication
+app.use('/api/user',authMiddleware, user);
 app.use('/api/admin', admin);
 app.get("/", (_, res: any) => {
     res.send("Hello world entry point 🚀✅");
 });
-
-
 
 app.listen(PORT, () => console.log(`Server is listening on port ${PORT}`)); 

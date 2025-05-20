@@ -1,39 +1,65 @@
+
+import { createAppointment } from 'controllers/users/userAppointmentController';
+import { createBusinessProfile, getAllBusinessProfiles, getBusinessProfileById, updateBusinessProfile } from 'controllers/users/userBusinessController';
+import { createCategory, deleteCategory, getAllCategories, getCategoryById, updateCategory } from 'controllers/users/userCategoryController';
+import { createClient, deleteClientById, getAllClients, getClientById, updateClientById } from 'controllers/users/userClientController';
+import { createPackage, getAllPackages, getPackageById } from 'controllers/users/userPackageController';
+import { createService, deleteService, getAllServices, getCategoriesWithServices, getServiceById, updateService } from 'controllers/users/userServicesController';
+import { createTeamMember, deleteTeamMember, getAllTeamMembers, getTeamMemberById, updateTeamMember } from 'controllers/users/userTeamMemberController';
+
 import { Router } from 'express';
-import { authMiddleware } from '../middleware/authMiddleware';
-import { getAllServices, getAllBusinessProfiles, getBusinessProfileById, updateBusinessProfile, createTeamMember, getAllTeamMembers, getTeamMemberById, updateTeamMember, deleteTeamMember, createClient, getAllClients, getClientById, updateClientById, deleteClientById, createCategory, getAllCategories, getCategoryById } from '../controllers/users/userController';
-import { createBusinessProfile } from '../controllers/users/userController';
 
 const router = Router();
 
-// Protected routes - require authentication
-
-// Service Routes
-router.get('/services', authMiddleware, getAllServices);
 
 // Business Profile Routes
-router.post('/business-profile', authMiddleware, createBusinessProfile);
-router.get('/business-profiles', authMiddleware, getAllBusinessProfiles);
-router.get('/business-profile/:profileId', authMiddleware, getBusinessProfileById);
-router.put('/business-profile/:profileId', authMiddleware, updateBusinessProfile);
+router.post('/business-profile', createBusinessProfile);
+router.get('/business-profiles', getAllBusinessProfiles);
+router.get('/business-profile/:profileId', getBusinessProfileById);
+router.put('/business-profile/:profileId', updateBusinessProfile);
+
 
 // Team Member Routes
-router.post('/team-member', authMiddleware, createTeamMember);
-router.get('/team-members', authMiddleware, getAllTeamMembers);
-router.get('/team-member/:memberId', authMiddleware, getTeamMemberById);
-router.put('/team-member/:memberId', authMiddleware, updateTeamMember);
-router.delete('/team-member/:memberId', authMiddleware, deleteTeamMember);
+router.post('/team-member', createTeamMember);
+router.get('/team-members', getAllTeamMembers);
+router.route('/team-member/:memberId')
+  .get(getTeamMemberById)
+  .put(updateTeamMember)
+  .delete(deleteTeamMember);
 
 // Client Routes
-router.post('/client', authMiddleware, createClient);
-router.get('/clients', authMiddleware, getAllClients);
-router.get('/client/:clientId', authMiddleware, getClientById);
-router.put('/client/:clientId', authMiddleware, updateClientById);
-router.delete('/client/:clientId', authMiddleware, deleteClientById);
+router.post('/client', createClient);
+router.get('/clients', getAllClients);
+router.route('/client/:clientId')
+  .get(getClientById)
+  .put(updateClientById)
+  .delete(deleteClientById);
 
 // Category Routes
-router.post('/category', authMiddleware, createCategory);
-router.get('/categories', authMiddleware, getAllCategories);
-router.get('/category/:categoryId', authMiddleware, getCategoryById);
+router.post('/category', createCategory);
+router.get('/categories', getAllCategories);
+router.route('/category/:categoryId')
+  .get(getCategoryById)
+  .put(updateCategory)
+  .delete(deleteCategory);
+
+// Service Routes
+router.post('/service', createService);
+router.get('/services', getAllServices);
+router.route('/service/:serviceId')
+.get(getServiceById)
+.put(updateService)
+.delete(deleteService);
+router.get('/categories-with-services', getCategoriesWithServices);
+
+// Package Routes
+router.post('/package', createPackage);
+router.get('/packages', getAllPackages);
+router.get('/package/:packageId', getPackageById);
+
+
+// Appointment Routes
+router.post('/appointment', createAppointment);
 
 export default router;
 

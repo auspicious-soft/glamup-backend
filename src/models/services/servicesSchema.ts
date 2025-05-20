@@ -18,6 +18,7 @@ export interface IService {
   businessId: mongoose.Types.ObjectId;
   teamMembers: TeamMemberService[];
   icon: string;
+  tags: string[]; 
   isActive: boolean;
   isDeleted: boolean;
   createdAt: Date;
@@ -86,6 +87,10 @@ const serviceSchema = new mongoose.Schema(
     icon: {
       type: String,
       default: "",
+    },
+     tags: {
+      type: [String],
+      default: [],
     },
     isActive: {
       type: Boolean,
