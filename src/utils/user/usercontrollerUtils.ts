@@ -5,6 +5,7 @@ import { errorResponseHandler } from "../../lib/errors/error-response-handler";
 import UserBusinessProfile from "../../models/business/userBusinessProfileSchema";
 import Service from "../../models/services/servicesSchema";
 import { errorParser } from "../../lib/errors/error-response-handler";
+import Category from "models/category/categorySchema";
 /**
  * Extracts user ID from request object
  */
@@ -405,5 +406,37 @@ export const processClientUpdateData = (
   }
   
   return updateData;
+};
+
+/**
+ * Validates and processes categories for a business profile
+ */
+export const validateAndProcessCategories = async (
+  categories: Array<{ categoryId: string; isActive?: boolean }>,
+  res: Response,
+  session?: mongoose.ClientSession
+): Promise<any[] | null> => {
+  const categoryIds = categories.map(category => category.categoryId);
+  
+  const existingCategories = session
+    ? await Category.find({ _id: { $in: categoryIds } }).session(session)
+    : await Category.find({ _id: { $in: categoryIds } });
+
+  type CategoryDoc = { _id: mongoose.Types.ObjectId; name: string; };
+
+  if (existingCategories.length !== categoryIds.length) {
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
+    errorResponseHandler("One or more selected categories do not exist", httpStatusCode.BAD_REQUEST, res);
+    return null;
+  }
+  
+  return categories.map(category => ({
+    categoryId: category.categoryId,
+    name: (existingCategories as CategoryDoc[]).find(c => c._id.toString() === category.categoryId)?.name || '',
+    isActive: category.isActive !== undefined ? category.isActive : true
+  }));
 };
 

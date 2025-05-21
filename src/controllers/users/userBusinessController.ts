@@ -14,7 +14,7 @@ import {
   validateUserAuth,
   findUserBusiness,
   validateObjectId,
-  validateAndProcessServices,
+  validateAndProcessCategories,
   startSession,
   handleTransactionError,
 } from "../../utils/user/usercontrollerUtils";
@@ -42,7 +42,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       businessProfilePic,
       address,
       country,
-      selectedServices,
+      selectedCategories,
       businessHours,
     } = req.body;
 
@@ -67,20 +67,20 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       });
     }
 
-    // Process selected services
-    let processedServices: any[] = [];
+    // Process selected categories
+    let processedCategories: any[] = [];
     if (
-      selectedServices &&
-      Array.isArray(selectedServices) &&
-      selectedServices.length > 0
+      selectedCategories &&
+      Array.isArray(selectedCategories) &&
+      selectedCategories.length > 0
     ) {
-      const processedServicesResult = await validateAndProcessServices(
-        selectedServices,
+      const processedCategoriesResult = await validateAndProcessCategories(
+        selectedCategories,
         res,
         session
       );
-      if (processedServicesResult === null) return;
-      processedServices = processedServicesResult;
+      if (processedCategoriesResult === null) return;
+      processedCategories = processedCategoriesResult;
     }
 
     const defaultTimeSlot: TimeSlot = { open: "09:00", close: "17:00" };
@@ -110,7 +110,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
           businessProfilePic,
           address,
           country,
-          selectedServices: processedServices,
+          selectedCategories: processedCategories,
           businessHours: processedBusinessHours,
           ownerId: userId,
           status: "active",
@@ -148,7 +148,7 @@ export const getAllBusinessProfiles = async (req: Request, res: Response) => {
     })
       .select(
         "businessName businessProfilePic PhoneNumber countryCode email businessDescription " +
-          "websiteLink facebookLink instagramLink messengerLink country selectedServices"
+          "websiteLink facebookLink instagramLink messengerLink country selectedCategories"
       )
       .sort({ createdAt: -1 });
 
@@ -244,23 +244,23 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       businessProfilePic,
       address,
       country,
-      selectedServices,
+      selectedCategories,
       businessHours,
     } = req.body;
 
-    let processedServices: any = existingProfile.selectedServices;
+    let processedCategories: any = (existingProfile as any).selectedCategories;
     if (
-      selectedServices &&
-      Array.isArray(selectedServices) &&
-      selectedServices.length > 0
+      selectedCategories &&
+      Array.isArray(selectedCategories) &&
+      selectedCategories.length > 0
     ) {
-      const processedServicesResult = await validateAndProcessServices(
-        selectedServices,
+      const processedCategoriesResult = await validateAndProcessCategories(
+        selectedCategories,
         res,
         session
       );
-      if (processedServicesResult === null) return;
-      processedServices = processedServicesResult;
+      if (processedCategoriesResult === null) return;
+      processedCategories = processedCategoriesResult;
     }
 
     let processedBusinessHours =
@@ -318,7 +318,7 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
           ...(businessProfilePic && { businessProfilePic }),
           ...(address && { address }),
           ...(country !== undefined && { country }),
-          ...(selectedServices && { selectedServices: processedServices }),
+          ...(selectedCategories && { selectedCategories: processedCategories }),
           ...(businessHours && { businessHours: processedBusinessHours }),
         },
       },

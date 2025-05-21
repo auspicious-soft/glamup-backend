@@ -92,10 +92,10 @@ const userBusinessProfileSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
-    selectedServices: [{
-      serviceId: {
+    selectedCategories: [{
+      categoryId: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'Service',
+        ref: 'Category',
         required: true
       },
       name: {
@@ -159,6 +159,7 @@ const userBusinessProfileSchema = new mongoose.Schema(
 
 const UserBusinessProfile = mongoose.model("UserBusinessProfile", userBusinessProfileSchema);
 export default UserBusinessProfile;
+
 
 
 

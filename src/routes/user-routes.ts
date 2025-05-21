@@ -1,5 +1,5 @@
 
-import { createAppointment } from 'controllers/users/userAppointmentController';
+import { createAppointment, getAppointmentById, getAppointmentsByDate, getTeamMemberAppointments, updateAppointment } from 'controllers/users/userAppointmentController';
 import { createBusinessProfile, getAllBusinessProfiles, getBusinessProfileById, updateBusinessProfile } from 'controllers/users/userBusinessController';
 import { createCategory, deleteCategory, getAllCategories, getCategoryById, updateCategory } from 'controllers/users/userCategoryController';
 import { createClient, deleteClientById, getAllClients, getClientById, updateClientById } from 'controllers/users/userClientController';
@@ -60,7 +60,9 @@ router.get('/package/:packageId', getPackageById);
 
 // Appointment Routes
 router.post('/appointment', createAppointment);
-
+router.get('/appointments/by-date', getAppointmentsByDate);
+router.get('/team-member/appointments/:teamMemberId', getTeamMemberAppointments);
+router.route('/appointment/:appointmentId').put(updateAppointment).get(getAppointmentById)
 export default router;
 
 

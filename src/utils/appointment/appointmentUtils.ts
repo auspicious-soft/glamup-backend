@@ -5,10 +5,320 @@ import TeamMember from "../../models/team/teamMemberSchema";
 import Service, { IService } from "../../models/services/servicesSchema";
 import Category from "../../models/category/categorySchema";
 import Package from "../../models/package/packageSchema";
+import UserBusinessProfile from "../../models/business/userBusinessProfileSchema";
+import { Response } from "express";
+import { errorResponseHandler } from "../../lib/errors/error-response-handler";
+import { httpStatusCode } from "../../lib/constant";
 
-/**
- * Checks for scheduling conflicts
- */
+//  Validates business profile and returns business ID
+export const validateBusinessProfile = async (
+  userId: string,
+  res: Response,
+  session?: mongoose.ClientSession
+): Promise<mongoose.Types.ObjectId | null> => {
+  const businessProfile = session
+    ? await UserBusinessProfile.findOne({
+        ownerId: userId,
+        isDeleted: false
+      }).session(session)
+    : await UserBusinessProfile.findOne({
+        ownerId: userId,
+        isDeleted: false
+      });
+  
+  if (!businessProfile) {
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
+    errorResponseHandler(
+      "Business profile not found",
+      httpStatusCode.NOT_FOUND,
+      res
+    );
+    return null;
+  }
+  
+  return businessProfile._id;
+};
+
+// Validates appointment existence and ownership
+export const validateAppointmentAccess = async (
+  appointmentId: string,
+  businessId: mongoose.Types.ObjectId,
+  res: Response,
+  session?: mongoose.ClientSession
+): Promise<any | null> => {
+  if (!appointmentId) {
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
+    errorResponseHandler(
+      "Appointment ID is required",
+      httpStatusCode.BAD_REQUEST,
+      res
+    );
+    return null;
+  }
+  
+  const appointment = session
+    ? await Appointment.findOne({
+        _id: appointmentId,
+        businessId: businessId,
+        isDeleted: false
+      }).session(session)
+    : await Appointment.findOne({
+        _id: appointmentId,
+        businessId: businessId,
+        isDeleted: false
+      });
+  
+  if (!appointment) {
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
+    errorResponseHandler(
+      "Appointment not found or doesn't belong to your business",
+      httpStatusCode.NOT_FOUND,
+      res
+    );
+    return null;
+  }
+  
+  return appointment;
+};
+
+// Validates team member existence and ownership
+export const validateTeamMemberAccess = async (
+  teamMemberId: string,
+  businessId: mongoose.Types.ObjectId,
+  res: Response,
+  session?: mongoose.ClientSession
+): Promise<any | null> => {
+  if (!teamMemberId) {
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
+    errorResponseHandler(
+      "Team member ID is required",
+      httpStatusCode.BAD_REQUEST,
+      res
+    );
+    return null;
+  }
+  
+  const teamMember = session
+    ? await TeamMember.findOne({
+        _id: teamMemberId,
+        businessId: businessId,
+        isDeleted: false
+      }).session(session)
+    : await TeamMember.findOne({
+        _id: teamMemberId,
+        businessId: businessId,
+        isDeleted: false
+      });
+  
+  if (!teamMember) {
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
+    errorResponseHandler(
+      "Team member not found or doesn't belong to your business",
+      httpStatusCode.NOT_FOUND,
+      res
+    );
+    return null;
+  }
+  
+  return teamMember;
+};
+
+// Builds date range query for appointments
+export const buildDateRangeQuery = (dateParam: any, startDateParam: any, endDateParam: any): any => {
+  if (dateParam) {
+    const queryDate = new Date(dateParam);
+    
+    if (isNaN(queryDate.getTime())) {
+      return { error: "Invalid date format. Please use YYYY-MM-DD" };
+    }
+    
+    const startOfDay = new Date(queryDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    
+    const endOfDay = new Date(queryDate);
+    endOfDay.setHours(23, 59, 59, 999);
+    
+    return {
+      $or: [
+        { date: { $gte: startOfDay, $lte: endOfDay } },
+        { endDate: { $gte: startOfDay, $lte: endOfDay } },
+        { date: { $lte: startOfDay }, endDate: { $gte: endOfDay } }
+      ]
+    };
+  } else if (startDateParam && endDateParam) {
+    const start = new Date(startDateParam);
+    const end = new Date(endDateParam);
+    
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return { error: "Invalid date format. Please use YYYY-MM-DD" };
+    }
+    
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+    
+    return {
+      $or: [
+        { date: { $gte: start, $lte: end } },
+        { endDate: { $gte: start, $lte: end } },
+        { date: { $lte: start }, endDate: { $gte: end } }
+      ]
+    };
+  }
+  
+  return null;
+};
+
+// Validates appointment status
+export const validateAppointmentStatus = (status: string): { valid: boolean; message?: string } => {
+  const validStatuses = ["pending", "confirmed", "cancelled", "completed", "no_show"];
+  
+  if (!validStatuses.includes(status)) {
+    return {
+      valid: false,
+      message: "Invalid status. Must be one of: pending, confirmed, cancelled, completed, no_show"
+    };
+  }
+  
+  return { valid: true };
+};
+
+//  Builds query for appointment filtering
+export const buildAppointmentQuery = (
+  businessId: mongoose.Types.ObjectId,
+  teamMemberId?: string,
+  clientId?: string,
+  categoryId?: string,
+  status?: string,
+  dateQuery?: any
+): any => {
+  const query: any = {
+    businessId: businessId,
+    isDeleted: false
+  };
+  
+  if (teamMemberId) {
+    query.teamMemberId = teamMemberId;
+  }
+  
+  if (clientId) {
+    query.clientId = clientId;
+  }
+  
+  if (categoryId) {
+    query.categoryId = categoryId;
+  }
+  
+  if (status) {
+    const statusValidation = validateAppointmentStatus(status);
+    if (!statusValidation.valid) {
+      return { error: statusValidation.message };
+    }
+    query.status = status;
+  }
+  
+  if (dateQuery) {
+    if (dateQuery.error) {
+      return { error: dateQuery.error };
+    }
+    query.$or = dateQuery.$or;
+  }
+  
+  return query;
+};
+
+// Prepares pagination parameters
+export const preparePagination = (page?: string, limit?: string): { skip: number; limit: number; page: number } => {
+  const pageNum = parseInt(page || '1');
+  const limitNum = parseInt(limit || '10');
+  const skip = (pageNum - 1) * limitNum;
+  
+  return {
+    skip,
+    limit: limitNum,
+    page: pageNum
+  };
+};
+
+// Checks if team member is changed and needs availability check
+export const isTeamMemberChanged = (
+  teamMemberId: string | undefined,
+  existingAppointment: any
+): boolean => {
+  return teamMemberId !== undefined && 
+         existingAppointment.teamMemberId && 
+         teamMemberId !== existingAppointment.teamMemberId.toString();
+};
+
+//  Prepares appointment update data from request and existing appointment
+export const prepareAppointmentUpdateData = (
+  req: any,
+  existingAppointment: any
+): {
+  clientId: string;
+  teamMemberId: string;
+  categoryId: string;
+  serviceIds: string[];
+  startDate: Date;
+  endDate: Date;
+  startTime: string;
+  endTime: string;
+} => {
+  const { 
+    clientId, 
+    teamMemberId, 
+    startDate, 
+    startTime, 
+    endTime,
+    categoryId, 
+    serviceIds
+  } = req.body;
+  
+  const checkClientId = clientId !== undefined ? clientId : 
+                       (existingAppointment.clientId ? existingAppointment.clientId.toString() : '');
+  
+  const checkTeamMemberId = teamMemberId !== undefined ? teamMemberId : 
+                           (existingAppointment.teamMemberId ? existingAppointment.teamMemberId.toString() : '');
+  
+  const checkCategoryId = categoryId !== undefined ? categoryId : 
+                         (existingAppointment.categoryId ? existingAppointment.categoryId.toString() : '');
+  
+  const checkServiceIds = serviceIds !== undefined ? serviceIds : 
+                         (existingAppointment.services && Array.isArray(existingAppointment.services) ? 
+                          existingAppointment.services.map((s: any) => s.serviceId ? s.serviceId.toString() : '') : []);
+  
+  const checkStartDate = startDate !== undefined ? new Date(startDate) : existingAppointment.date;
+  const checkEndDate = checkStartDate; // Use same date for end date
+  const checkStartTime = startTime !== undefined ? startTime : existingAppointment.startTime;
+  const checkEndTime = endTime !== undefined ? endTime : existingAppointment.endTime;
+  
+  return {
+    clientId: checkClientId,
+    teamMemberId: checkTeamMemberId,
+    categoryId: checkCategoryId,
+    serviceIds: checkServiceIds.filter((id: string) => id),
+    startDate: checkStartDate,
+    endDate: checkEndDate,
+    startTime: checkStartTime,
+    endTime: checkEndTime
+  };
+};
+
+//  Checks for scheduling conflicts
 export const checkForConflicts = async (
   teamMemberId: mongoose.Types.ObjectId,
   startDate: Date,
@@ -83,9 +393,7 @@ export const checkForConflicts = async (
   return { hasConflict: false };
 };
 
-/**
- * Validates if a time slot is available for a team member
- */
+//  Validates if a time slot is available for a team member
 export const isTimeSlotAvailable = async (
   teamMemberId: string,
   startDate: Date,
@@ -111,9 +419,7 @@ export const isTimeSlotAvailable = async (
   }
 };
 
-/**
- * Calculates the end time based on start time and duration
- */
+// Calculates the end time based on start time and duration
 export const calculateEndTime = (startTime: string, durationMinutes: number): string => {
   const [hours, minutes] = startTime.split(':').map(Number);
   
@@ -124,9 +430,7 @@ export const calculateEndTime = (startTime: string, durationMinutes: number): st
   return `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}`;
 };
 
-/**
- * Validates client, team member, services, and category for an appointment
- */
+// Validates client, team member, services, and category for an appointment
 export const validateAppointmentEntities = async (
   clientId: string,
   teamMemberId: string,
@@ -223,51 +527,7 @@ export const validateAppointmentEntities = async (
   }
 };
 
-/**
- * Helper function to get the next date based on recurring pattern
- */
-const getNextDate = (date: Date, pattern: string): Date => {
-  const nextDate = new Date(date);
-  
-  switch (pattern) {
-    case "daily":
-      nextDate.setDate(date.getDate() + 1);
-      break;
-    case "weekly":
-      nextDate.setDate(date.getDate() + 7);
-      break;
-    case "biweekly":
-      nextDate.setDate(date.getDate() + 14);
-      break;
-    case "monthly":
-      nextDate.setMonth(date.getMonth() + 1);
-      break;
-  }
-  
-  return nextDate;
-};
-
-/**
- * Calculates the total duration in days between two dates
- */
-export const calculateDateDuration = (startDate: Date, endDate: Date): number => {
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  
-  // Reset time to compare just the dates
-  start.setHours(0, 0, 0, 0);
-  end.setHours(0, 0, 0, 0);
-  
-  // Calculate difference in days
-  const diffTime = Math.abs(end.getTime() - start.getTime());
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  
-  return diffDays + 1; // Include both start and end days
-};
-
-/**
- * Prepares appointment data for creation
- */
+// Prepares appointment data for creation
 export const prepareAppointmentData = (
   client: any,
   teamMember: any,
@@ -336,3 +596,48 @@ export const prepareAppointmentData = (
   };
 };
 
+
+// Validates required appointment fields
+export const validateRequiredAppointmentFields = (
+  clientId?: string,
+  teamMemberId?: string,
+  startDate?: string,
+  startTime?: string,
+  categoryId?: string
+): boolean => {
+  if (!clientId || !teamMemberId || !startDate || !startTime || !categoryId) {
+    return false;
+  }
+  return true;
+};
+
+// Formats date for response
+export const formatDateForResponse = (date: Date): string => {
+  return date.toISOString().split('T')[0];
+};
+
+// Prepares team member data for response
+export const prepareTeamMemberResponse = (teamMember: any): { id: any; name: string } => {
+  return {
+    id: teamMember._id,
+    name: teamMember.name
+  };
+};
+// Prepares pagination metadata for response
+export const preparePaginationMetadata = (
+  totalItems: number,
+  pagination: { skip: number; limit: number; page: number },
+  items: any[]
+): {
+  count: number;
+  totalItems: number;
+  totalPages: number;
+  currentPage: number;
+} => {
+  return {
+    count: items.length,
+    totalItems,
+    totalPages: Math.ceil(totalItems / pagination.limit),
+    currentPage: pagination.page
+  };
+};
