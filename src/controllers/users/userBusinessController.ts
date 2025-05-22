@@ -20,8 +20,8 @@ import {
 } from "../../utils/user/usercontrollerUtils";
 import User from "../../models/user/userSchema";
 
-// Business Profile functions
 
+// Business Profile functions
 export const createBusinessProfile = async (req: Request, res: Response) => {
   const session = await startSession();
 
@@ -67,7 +67,6 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       });
     }
 
-    // Process selected categories
     let processedCategories: any[] = [];
     if (
       selectedCategories &&
@@ -119,7 +118,6 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       { session }
     );
 
-    // Update the user's businessRole to "owner"
     await User.findByIdAndUpdate(
       userId,
       { businessRole: "owner" },
@@ -174,7 +172,6 @@ export const getBusinessProfileById = async (req: Request, res: Response) => {
 
     if (!(await validateObjectId(profileId, "Business profile", res))) return;
 
-    // Find the business profile with owner check
     const businessProfile = await UserBusinessProfile.findOne({
       _id: profileId,
       ownerId: userId,

@@ -7,6 +7,7 @@ import {
   verifyResetPasswordOTP, 
   updatePassword 
 } from '../controllers/auth/userAuthController';
+import { reactivateUserAccount } from 'controllers/users/userProfileController';
 
 const router = Router();
 
@@ -20,6 +21,9 @@ router.post('/user/login', UserLogin);
 router.post('/user/reset-password', ResetPassword);
 router.post('/user/verify-reset-otp', verifyResetPasswordOTP);
 router.post('/user/update-password', updatePassword);
+
+router.post('/user/profile/reactivate', reactivateUserAccount);
+
 
 
 export default router;

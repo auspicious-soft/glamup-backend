@@ -193,7 +193,7 @@ export const createPackage = async (req: Request, res: Response) => {
       "Package created successfully",
       { 
         package: newPackage[0],
-        totalServicesPrice: totalServicesPrice // For reference
+        totalServicesPrice: totalServicesPrice 
       },
       httpStatusCode.CREATED
     );

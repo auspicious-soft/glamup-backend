@@ -391,11 +391,9 @@ export const getAppointmentById = async (req: Request, res: Response) => {
     
     const { appointmentId } = req.params;
     
-    // Validate business profile
     const businessId = await validateBusinessProfile(userId, res);
     if (!businessId) return;
     
-    // Validate appointment access
     const appointment = await validateAppointmentAccess(appointmentId, businessId, res);
     if (!appointment) return;
     

@@ -9,6 +9,7 @@ import Service from "../../models/services/servicesSchema";
 import {
   startSession,
   handleTransactionError,
+  validateObjectId,
 } from "../../utils/user/usercontrollerUtils";
 import Category from "models/category/categorySchema";
 import {
@@ -19,6 +20,7 @@ import {
   buildPaginationParams,
   createPaginationMetadata
 } from "../../utils/user/categoryServiceUtils";
+import UserBusinessProfile from "models/business/userBusinessProfileSchema";
 
 // Category functions
 export const createCategory = async (req: Request, res: Response) => {
@@ -40,7 +42,6 @@ export const createCategory = async (req: Request, res: Response) => {
       );
     }
     
-    // Check for duplicate category name
     if (await checkDuplicateCategoryName(name, businessId, null, res, session)) return;
     
     const newCategory = await Category.create(
@@ -78,19 +79,15 @@ export const getAllCategories = async (req: Request, res: Response) => {
     const { page, limit, skip } = buildPaginationParams(req);
     const search = req.query.search as string;
 
-    // Build query for category search
     const query = buildCategorySearchQuery(businessId, search);
 
-    // Get total count for pagination
     const totalCategories = await Category.countDocuments(query);
     
-    // Get categories with pagination
     const categories = await Category.find(query)
       .sort({ name: 1 })
       .skip(skip)
       .limit(limit);
 
-    // Create pagination metadata
     const pagination = createPaginationMetadata(totalCategories, page, limit);
 
     return successResponse(res, "Categories fetched successfully", {
@@ -142,10 +139,8 @@ export const updateCategory = async (req: Request, res: Response) => {
 
     const { name, description, isActive } = req.body;
     
-    // Build update object
     const updateData: any = {};
     if (name) {
-      // Check for duplicate name if name is being changed
       if (name.trim() !== (existingCategory as any).name) {
         if (await checkDuplicateCategoryName(name, businessId, categoryId, res, session)) return;
       }
@@ -155,7 +150,6 @@ export const updateCategory = async (req: Request, res: Response) => {
     if (description !== undefined) updateData.description = description;
     if (isActive !== undefined) updateData.isActive = isActive;
 
-    // Update the category
     const updatedCategory = await Category.findByIdAndUpdate(
       categoryId,
       { $set: updateData },
@@ -183,7 +177,6 @@ export const deleteCategory = async (req: Request, res: Response) => {
     const existingCategory = await validateCategoryAccess(categoryId, businessId, res, session);
     if (!existingCategory) return;
 
-    // Check if there are any active services using this category
     const servicesUsingCategory = await Service.countDocuments({
       categoryId: categoryId,
       businessId: businessId,
@@ -200,7 +193,6 @@ export const deleteCategory = async (req: Request, res: Response) => {
       );
     }
 
-    // Soft delete the category
     await Category.findByIdAndUpdate(
       categoryId,
       { $set: { isDeleted: true } },
@@ -216,3 +208,47 @@ export const deleteCategory = async (req: Request, res: Response) => {
   }
 };
 
+export const getBusinessCategories = async (req: Request, res: Response) => {
+  try {
+    const { businessId } = req.params;
+
+    if (!(await validateObjectId(businessId, "Business", res))) return;
+
+    const business = await UserBusinessProfile.findOne({
+      _id: businessId,
+      status: "active",
+      isDeleted: false
+    });
+
+    if (!business) {
+      return errorResponseHandler(
+        "Business profile not found or inactive",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    const categories = await Category.find({
+      businessId: businessId,
+      isActive: true,
+      isDeleted: false
+    }).sort({ name: 1 });
+
+    return successResponse(res, "Business categories fetched successfully", {
+      businessName: business.businessName,
+      businessDescription: business.businessDescription,
+      categories: categories.map(category => ({
+        _id: category._id,
+        name: category.name,
+        description: category.description
+      }))
+    });
+  } catch (error: any) {
+    console.error("Error fetching business categories:", error);
+    const parsedError = errorParser(error);
+    return res.status(parsedError.code).json({
+      success: false,
+      message: parsedError.message,
+    });
+  }
+};

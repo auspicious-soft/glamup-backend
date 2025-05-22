@@ -65,7 +65,6 @@ export const createService = async (req: Request, res: Response) => {
     
     if (teamMembers && !processedTeamMembers) return;
 
-    // Process tags using the utility function
     const processedTags = processServiceTags(tags || []);
 
     const newService = await Service.create(
@@ -210,7 +209,6 @@ export const updateService = async (req: Request, res: Response) => {
       updateData.teamMembers = processedTeamMembers || [];
     }
 
-    // Process tags using the utility function
     if (tags !== undefined) {
       updateData.tags = processServiceTags(tags);
     }

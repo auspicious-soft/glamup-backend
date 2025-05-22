@@ -47,7 +47,6 @@ export const createClient = async (req: Request, res: Response) => {
       preferredTeamMembers,
     } = req.body;
 
-    // Validate required fields
     if (!name || !email) {
       await session.abortTransaction();
       session.endSession();
@@ -58,10 +57,8 @@ export const createClient = async (req: Request, res: Response) => {
       );
     }
 
-    // Validate email format
     if (!(await validateEmail(email, res, session))) return;
 
-    // Check for duplicate email - pass empty string as clientId for new clients
     if (await checkDuplicateClientEmail("", email, businessId, res, session)) return;
 
     const newClient = await Client.create(
@@ -211,13 +208,11 @@ export const updateClientById = async (req: Request, res: Response) => {
       isActive,
     } = req.body;
 
-    // If email is being changed, validate it and check for duplicate
     if (email && email !== existingClient.get('email')) {
       if (!(await validateEmail(email, res, session))) return;
       if (await checkDuplicateClientEmail(clientId, email, businessId, res, session)) return;
     }
 
-    // Process preferred services if provided
     let processedServices = undefined;
     if (preferredServices && Array.isArray(preferredServices) && preferredServices.length > 0) {
       processedServices = await validateAndProcessServices(
