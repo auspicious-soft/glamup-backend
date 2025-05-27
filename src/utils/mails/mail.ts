@@ -3,12 +3,12 @@ import { configDotenv } from "dotenv";
 import ForgotPasswordEmail from "./templates/forget-password";
 import LoginCredentials from "./templates/login-credentials";
 import VerifyEmail from "./templates/email-verification";
-
 configDotenv()
-const resend = new Resend(process.env.RESEND_API_KEY)
+
+const resend = new Resend(process.env.RESEND_EMAIL_API_KEY)
 
 
-export const sendPasswordResetEmail = async (email: string, token: string, language: string = "eng") => {
+export const sendPasswordResetEmail = async (email: string, token: string, language: string = "en") => {
    return await resend.emails.send({
         from: process.env.COMPANY_RESEND_GMAIL_ACCOUNT as string,
         to: email,

@@ -8,7 +8,7 @@ interface EmailProps {
 const ForgotPasswordEmail = (props: Readonly<EmailProps>): React.ReactElement => {
   const { otp, language } = props;
   const translations: { [key: string]: { subject: string; body: string; footer: string } } = {
-    eng: {
+    en: {
       subject: "Reset Password",
       body: `Below is the otp for resetting the password.`,
       footer: `If you did not request the reset password, please ignore this email.`,
@@ -29,7 +29,7 @@ const ForgotPasswordEmail = (props: Readonly<EmailProps>): React.ReactElement =>
   return (
     <Html lang="en">
       <Head>
-        <title>Bookstagram Reset Password</title>
+        <title> Glamup Reset Password</title>
       </Head>
       <Container>
         <h1 style={{ color: "black" }}>{subject}</h1>

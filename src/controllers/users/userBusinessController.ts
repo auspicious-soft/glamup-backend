@@ -19,7 +19,62 @@ import {
   handleTransactionError,
 } from "../../utils/user/usercontrollerUtils";
 import User from "../../models/user/userSchema";
+import GlobalCategory from "../../models/globalCategory/globalCategorySchema";
 
+// Helper function to validate and process global categories
+const validateAndProcessGlobalCategories = async (
+  categoryIds: string[],
+  res: Response,
+  session?: any
+): Promise<any[] | null> => {
+  try {
+    // Find all the global categories by their IDs
+    const categories = session
+      ? await GlobalCategory.find({ 
+          _id: { $in: categoryIds }, 
+          isActive: true, 
+          isDeleted: false 
+        }).session(session)
+      : await GlobalCategory.find({ 
+          _id: { $in: categoryIds }, 
+          isActive: true, 
+          isDeleted: false 
+        });
+
+    // Check if all requested categories were found
+    if (categories.length !== categoryIds.length) {
+      if (session) {
+        await session.abortTransaction();
+        session.endSession();
+      }
+      errorResponseHandler(
+        "One or more selected categories are invalid or inactive",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+      return null;
+    }
+
+    // Format the categories for storage
+    return categories.map(category => ({
+      categoryId: category._id,
+      name: category.name,
+      isActive: true
+    }));
+  } catch (error) {
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
+    const parsedError = errorParser(error);
+    errorResponseHandler(
+      parsedError.message,
+      parsedError.code,
+      res
+    );
+    return null;
+  }
+};
 
 // Business Profile functions
 export const createBusinessProfile = async (req: Request, res: Response) => {
@@ -73,7 +128,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       Array.isArray(selectedCategories) &&
       selectedCategories.length > 0
     ) {
-      const processedCategoriesResult = await validateAndProcessCategories(
+      const processedCategoriesResult = await validateAndProcessGlobalCategories(
         selectedCategories,
         res,
         session
@@ -82,17 +137,55 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       processedCategories = processedCategoriesResult;
     }
 
-    const defaultTimeSlot: TimeSlot = { open: "09:00", close: "17:00" };
-
-    const processedBusinessHours: BusinessHours = {
-      monday: { isOpen: true, timeSlots: [defaultTimeSlot] },
-      tuesday: { isOpen: true, timeSlots: [defaultTimeSlot] },
-      wednesday: { isOpen: true, timeSlots: [defaultTimeSlot] },
-      thursday: { isOpen: true, timeSlots: [defaultTimeSlot] },
-      friday: { isOpen: true, timeSlots: [defaultTimeSlot] },
-      saturday: { isOpen: true, timeSlots: [defaultTimeSlot] },
-      sunday: { isOpen: false, timeSlots: [defaultTimeSlot] },
+    // Process business hours
+    let processedBusinessHours: BusinessHours = {
+      monday: { isOpen: true, timeSlots: [{ open: "09:00", close: "17:00" }] },
+      tuesday: { isOpen: true, timeSlots: [{ open: "09:00", close: "17:00" }] },
+      wednesday: { isOpen: true, timeSlots: [{ open: "09:00", close: "17:00" }] },
+      thursday: { isOpen: true, timeSlots: [{ open: "09:00", close: "17:00" }] },
+      friday: { isOpen: true, timeSlots: [{ open: "09:00", close: "17:00" }] },
+      saturday: { isOpen: true, timeSlots: [{ open: "09:00", close: "17:00" }] },
+      sunday: { isOpen: false, timeSlots: [{ open: "09:00", close: "17:00" }] },
     };
+
+    if (businessHours && typeof businessHours === "object") {
+      const days = [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+      ];
+
+      for (const day of days) {
+        if (businessHours[day]) {
+          const dayData = businessHours[day];
+          const daySchedule: DaySchedule = {
+            isOpen: dayData.isOpen !== undefined ? dayData.isOpen : processedBusinessHours[day].isOpen,
+            timeSlots: [],
+          };
+
+          if (dayData.timeSlots && Array.isArray(dayData.timeSlots)) {
+            for (const slot of dayData.timeSlots) {
+              if (slot.open && slot.close) {
+                daySchedule.timeSlots.push({
+                  open: slot.open,
+                  close: slot.close,
+                });
+              }
+            }
+          }
+
+          if (daySchedule.timeSlots.length === 0 && processedBusinessHours[day].timeSlots) {
+            daySchedule.timeSlots = processedBusinessHours[day].timeSlots;
+          }
+
+          processedBusinessHours[day] = daySchedule;
+        }
+      }
+    }
 
     const newBusinessProfile = await UserBusinessProfile.create(
       [
@@ -251,7 +344,7 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       Array.isArray(selectedCategories) &&
       selectedCategories.length > 0
     ) {
-      const processedCategoriesResult = await validateAndProcessCategories(
+      const processedCategoriesResult = await validateAndProcessGlobalCategories(
         selectedCategories,
         res,
         session
@@ -263,7 +356,7 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
     let processedBusinessHours =
       existingProfile.businessHours as unknown as BusinessHours;
 
-    if (businessHours) {
+    if (businessHours && typeof businessHours === "object") {
       const days = [
         "monday",
         "tuesday",
@@ -272,29 +365,38 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
         "friday",
         "saturday",
         "sunday",
-      ] as const;
+      ];
 
       for (const day of days) {
         if (businessHours[day]) {
-          const dayData = businessHours[day] as Partial<DaySchedule>;
-
-          if (dayData.isOpen !== undefined) {
-            processedBusinessHours[day].isOpen = dayData.isOpen;
-          }
+          const dayData = businessHours[day];
+          const daySchedule: DaySchedule = {
+            isOpen:
+              dayData.isOpen !== undefined
+                ? dayData.isOpen
+                : processedBusinessHours[day].isOpen,
+            timeSlots: [],
+          };
 
           if (dayData.timeSlots && Array.isArray(dayData.timeSlots)) {
-            const validTimeSlots = dayData.timeSlots.filter(
-              (slot) =>
-                slot.open &&
-                slot.close &&
-                typeof slot.open === "string" &&
-                typeof slot.close === "string"
-            );
-
-            if (validTimeSlots.length > 0) {
-              processedBusinessHours[day].timeSlots = validTimeSlots;
+            for (const slot of dayData.timeSlots) {
+              if (slot.open && slot.close) {
+                daySchedule.timeSlots.push({
+                  open: slot.open,
+                  close: slot.close,
+                });
+              }
             }
           }
+
+          if (
+            daySchedule.timeSlots.length === 0 &&
+            processedBusinessHours[day].timeSlots
+          ) {
+            daySchedule.timeSlots = processedBusinessHours[day].timeSlots;
+          }
+
+          processedBusinessHours[day] = daySchedule;
         }
       }
     }
@@ -325,9 +427,12 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
     await session.commitTransaction();
     session.endSession();
 
-    return successResponse(res, "Business profile updated successfully", {
-      businessProfile: updatedProfile,
-    });
+    return successResponse(
+      res,
+      "Business profile updated successfully",
+      { businessProfile: updatedProfile },
+      httpStatusCode.OK
+    );
   } catch (error: any) {
     return handleTransactionError(session, error, res);
   }

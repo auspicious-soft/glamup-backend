@@ -43,4 +43,5 @@ const VerifyEmail = (props: Readonly<EmailProps>): React.ReactElement => {
     </Html>
   );
 };
-export default VerifyEmail
+
+export default VerifyEmail;

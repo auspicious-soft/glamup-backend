@@ -14,6 +14,7 @@ import {
   removeSensitiveData, 
   successResponse 
 } from '../../utils/userAuth/signUpAuth';
+import { sendPasswordResetEmail } from 'utils/mails/mail';
 
 export const userSignUp = async (req: Request, res: Response) => {
   try {
@@ -146,6 +147,10 @@ export const ResetPassword = async (req: Request, res: Response) => {
       }
     });
 
+        if (email) {
+      await sendPasswordResetEmail(email, otp, Array.isArray(user.languages) ? user.languages[0] || "en" : user.languages || "en");
+    }
+
     const preferredMethod = req.body.verificationMethod || 'email';
     await sendOTP(email, phoneNumber, countryCode, otp, preferredMethod);
 
@@ -167,17 +172,17 @@ export const ResetPassword = async (req: Request, res: Response) => {
 
 export const verifySignupOTP = async (req: Request, res: Response) => {
   try {
-    const { otp, phoneNumber, verificationToken } = req.body;
+    const { otp, phoneNumber, email, verificationToken } = req.body;
     
-    if (!otp || !phoneNumber || !verificationToken) {
+    if (!otp || (!phoneNumber && !email) || !verificationToken) {
       return errorResponseHandler(
-        "OTP, phone number, and verification token are required", 
+        "OTP, verification token, and either phone number or email are required", 
         httpStatusCode.BAD_REQUEST, 
         res
       );
     }
 
-    const user = await findUserByEmailOrPhone(undefined, phoneNumber);
+    const user = await findUserByEmailOrPhone(email, phoneNumber);
     if (!user) {
       return errorResponseHandler("User not found", httpStatusCode.BAD_REQUEST, res);
     }
@@ -229,17 +234,17 @@ export const verifySignupOTP = async (req: Request, res: Response) => {
 
 export const verifyResetPasswordOTP = async (req: Request, res: Response) => {
   try {
-    const { otp, phoneNumber, resetToken } = req.body;
+    const { otp, phoneNumber, email, resetToken } = req.body;
     
-    if (!otp || !phoneNumber || !resetToken) {
+    if (!otp || (!phoneNumber && !email) || !resetToken) {
       return errorResponseHandler(
-        "OTP, phone number, and reset token are required", 
+        "OTP, reset token, and either phone number or email are required", 
         httpStatusCode.BAD_REQUEST, 
         res
       );
     }
 
-    const user = await findUserByEmailOrPhone(undefined, phoneNumber);
+    const user = await findUserByEmailOrPhone(email, phoneNumber);
     if (!user) {
       return errorResponseHandler("User not found", httpStatusCode.BAD_REQUEST, res);
     }
@@ -293,17 +298,17 @@ export const verifyResetPasswordOTP = async (req: Request, res: Response) => {
 
 export const updatePassword = async (req: Request, res: Response) => {
   try {
-    const { phoneNumber, resetToken, newPassword } = req.body;
+    const { phoneNumber, email, resetToken, newPassword } = req.body;
     
-    if (!phoneNumber || !resetToken || !newPassword) {
+    if ((!phoneNumber && !email) || !resetToken || !newPassword) {
       return errorResponseHandler(
-        "Phone number, reset token, and new password are required",
+        "Reset token, new password, and either phone number or email are required",
         httpStatusCode.BAD_REQUEST,
         res
       );
     }
 
-    const user = await findUserByEmailOrPhone(undefined, phoneNumber);
+    const user = await findUserByEmailOrPhone(email, phoneNumber);
     if (!user) {
       return errorResponseHandler("User not found", httpStatusCode.BAD_REQUEST, res);
     }

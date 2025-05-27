@@ -16,7 +16,7 @@ export const getUserProfile = async (req: Request, res: Response) => {
     if (!userId) return;
 
     const user = await User.findById(userId).select(
-      "fullName email phoneNumber countryCode profilePicture"
+      "fullName email phoneNumber countryCode profilePic isVerified verificationMethod isActive isDeleted authType role businessRole identifierId "
     );
 
     if (!user) {
@@ -40,6 +40,14 @@ export const getUserProfile = async (req: Request, res: Response) => {
       phoneNumber: user.phoneNumber,
       countryCode: user.countryCode,
       profilePicture: user.profilePic,
+      isVerified: user.isVerified,
+      verificationMethod: user.verificationMethod,
+      isActive: user.isActive,
+      isDeleted: user.isDeleted,
+      authType: user.authType,
+      role: user.role,
+      businessRole: user.businessRole,
+      identifierId: user.identifierId,
       business: businessProfile
         ? {
             businessId: businessProfile._id,
