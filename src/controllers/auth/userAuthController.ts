@@ -17,8 +17,8 @@ import {
 
 export const userSignUp = async (req: Request, res: Response) => {
   try {
-    const { fullName, email, password, phoneNumber, countryCode } = req.body;
-     const requiredFields = { fullName, email, password, phoneNumber, countryCode };
+    const { fullName, email, password, phoneNumber, countryCode, profilePic } = req.body;
+    const requiredFields = { fullName, email, password, phoneNumber, countryCode, profilePic };
     const missingFields = Object.entries(requiredFields)
       .filter(([_, value]) => !value)
       .map(([key]) => key);
@@ -53,6 +53,7 @@ export const userSignUp = async (req: Request, res: Response) => {
       password: await hashPassword(password),
       phoneNumber,
       countryCode,
+      profilePic,
       otp: {
         code: otp, 
         expiresAt: otpExpiry,
