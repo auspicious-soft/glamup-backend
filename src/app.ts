@@ -8,6 +8,7 @@ import cookieParser from 'cookie-parser'
 
 import {admin, auth, client, globCategories, user} from "./routes"
 import { authMiddleware } from "middleware/authMiddleware"
+import { clientAuthMiddleware } from "middleware/clientAuthMiddleware"
 
 const __filename = fileURLToPath(import.meta.url) 
 const __dirname = path.dirname(__filename)      
@@ -48,7 +49,7 @@ app.use('/api', auth);
 app.use('/api/user',authMiddleware, user);
 app.use('/api/admin', admin);
 app.use('/api/global-categories', globCategories);
-app.use("/api/client", client);
+app.use("/api/client", clientAuthMiddleware, client);
 
 app.get("/", (_, res: any) => {
     res.send("Hello world entry point 🚀✅");
