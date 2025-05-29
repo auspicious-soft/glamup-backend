@@ -19,6 +19,7 @@ export interface IService {
   teamMembers: TeamMemberService[];
   icon: string;
   tags: string[]; 
+  isGlobalCategory: boolean; // Flag for services linked to global categories
   isActive: boolean;
   isDeleted: boolean;
   createdAt: Date;
@@ -99,6 +100,10 @@ const serviceSchema = new mongoose.Schema(
     isDeleted: {
       type: Boolean,
       default: false,
+    },
+    isGlobalCategory: {
+      type: Boolean,
+      default: false
     },
   },
   {

@@ -21,6 +21,7 @@ import {
   createPaginationMetadata
 } from "../../utils/user/categoryServiceUtils";
 import UserBusinessProfile from "models/business/userBusinessProfileSchema";
+import mongoose from "mongoose";
 
 // Category functions
 export const createCategory = async (req: Request, res: Response) => {
@@ -88,10 +89,28 @@ export const getAllCategories = async (req: Request, res: Response) => {
       .skip(skip)
       .limit(limit);
 
-    const pagination = createPaginationMetadata(totalCategories, page, limit);
+    const businessProfile = await UserBusinessProfile.findOne({
+      _id: businessId,
+      isDeleted: false
+    });
+
+    const globalCategories = businessProfile?.selectedCategories || [];
+    const formattedGlobalCategories = globalCategories.map(gc => ({
+      _id: gc.categoryId,
+      name: gc.name,
+      description: "",
+      businessId: businessId,
+      isActive: gc.isActive,
+      isDeleted: false,
+      isGlobal: true
+    }));
+
+    const allCategories = [...categories, ...formattedGlobalCategories];
+
+    const pagination = createPaginationMetadata(totalCategories + formattedGlobalCategories.length, page, limit);
 
     return successResponse(res, "Categories fetched successfully", {
-      categories,
+      categories: allCategories,
       pagination
     });
   } catch (error: any) {
@@ -111,10 +130,70 @@ export const getCategoryById = async (req: Request, res: Response) => {
 
     const { categoryId } = req.params;
     
-    const category = await validateCategoryAccess(categoryId, businessId, res);
-    if (!category) return;
-
-    return successResponse(res, "Category fetched successfully", { category });
+    // Check if this is a regular category
+    const category = await Category.findOne({
+      _id: categoryId,
+      businessId: businessId,
+      isDeleted: false
+    });
+    
+    if (category) {
+      return successResponse(res, "Category fetched successfully", { 
+        category,
+        isGlobal: false 
+      });
+    }
+    
+    // If not found as regular category, check if it's a global category
+    const businessProfile = await UserBusinessProfile.findOne({
+      _id: businessId,
+      "selectedCategories.categoryId": categoryId,
+      isDeleted: false
+    });
+    
+    if (!businessProfile) {
+      return errorResponseHandler(
+        "Category not found or you don't have access to it",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+    
+    // Find the global category in the business profile
+    const globalCatInfo = businessProfile.selectedCategories.find(
+      cat => cat.categoryId.toString() === categoryId
+    );
+    
+    // Get full global category details
+    const globalCategory = await mongoose.model("GlobalCategory").findOne({
+      _id: categoryId,
+      isActive: true,
+      isDeleted: false
+    });
+    
+    if (!globalCategory) {
+      return errorResponseHandler(
+        "Global category not found or inactive",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+    
+    // Format the global category to match the expected structure
+    const formattedGlobalCategory = {
+      _id: globalCategory._id,
+      name: globalCategory.name,
+      description: globalCategory.description || "",
+      icon: globalCategory.icon || "",
+      businessId: businessId,
+      isActive: globalCatInfo?.isActive || true,
+      isDeleted: false,
+      isGlobal: true
+    };
+    
+    return successResponse(res, "Global category fetched successfully", { 
+      category: formattedGlobalCategory 
+    });
   } catch (error: any) {
     console.error("Error fetching category:", error);
     const parsedError = errorParser(error);
@@ -134,6 +213,24 @@ export const updateCategory = async (req: Request, res: Response) => {
 
     const { categoryId } = req.params;
     
+    // Check if this is a global category
+    const businessProfile = await UserBusinessProfile.findOne({
+      _id: businessId,
+      "selectedCategories.categoryId": categoryId,
+      isDeleted: false
+    }).session(session);
+    
+    if (businessProfile) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Cannot update global category. Global categories can only be modified by administrators.",
+        httpStatusCode.FORBIDDEN,
+        res
+      );
+    }
+    
+    // Continue with regular category update
     const existingCategory = await validateCategoryAccess(categoryId, businessId, res, session);
     if (!existingCategory) return;
 
@@ -174,6 +271,24 @@ export const deleteCategory = async (req: Request, res: Response) => {
 
     const { categoryId } = req.params;
     
+    // Check if this is a global category
+    const businessProfile = await UserBusinessProfile.findOne({
+      _id: businessId,
+      "selectedCategories.categoryId": categoryId,
+      isDeleted: false
+    }).session(session);
+    
+    if (businessProfile) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Cannot delete global category. Global categories can only be removed from your business profile settings.",
+        httpStatusCode.FORBIDDEN,
+        res
+      );
+    }
+    
+    // Continue with regular category deletion
     const existingCategory = await validateCategoryAccess(categoryId, businessId, res, session);
     if (!existingCategory) return;
 
@@ -233,15 +348,23 @@ export const getBusinessCategories = async (req: Request, res: Response) => {
       isActive: true,
       isDeleted: false
     }).sort({ name: 1 });
+    
+    // Add global categories from business profile
+    const globalCategories = business.selectedCategories || [];
+    const formattedGlobalCategories = globalCategories.map(gc => ({
+      _id: gc.categoryId,
+      name: gc.name,
+      description: "",
+      businessId: businessId,
+      isActive: gc.isActive,
+      isDeleted: false,
+      isGlobal: true
+    }));
+    
+    const allCategories = [...categories, ...formattedGlobalCategories];
 
     return successResponse(res, "Business categories fetched successfully", {
-      businessName: business.businessName,
-      businessDescription: business.businessDescription,
-      categories: categories.map(category => ({
-        _id: category._id,
-        name: category.name,
-        description: category.description
-      }))
+      categories: allCategories
     });
   } catch (error: any) {
     console.error("Error fetching business categories:", error);

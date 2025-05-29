@@ -5,7 +5,7 @@ import { createCategory, deleteCategory, getAllCategories, getBusinessCategories
 import { createClient, deleteClientById, getAllClients, getClientById, updateClientById } from 'controllers/users/userClientController';
 import { createPackage, getAllPackages, getPackageById } from 'controllers/users/userPackageController';
 import { deactivateUserAccount, getUserProfile, updateUserPassword, updateUserProfile } from 'controllers/users/userProfileController';
-import { createService, deleteService, getAllServices, getCategoriesWithServices, getServiceById, updateService } from 'controllers/users/userServicesController';
+import { addServiceToGlobalCategory, createService, deleteService,  getAllServices, getCategoriesWithServices, getServiceById, updateService } from 'controllers/users/userServicesController';
 import { createTeamMember, deleteTeamMember, getAllTeamMembers, getTeamMemberById, updateTeamMember } from 'controllers/users/userTeamMemberController';
 
 import { Router } from 'express';
@@ -69,8 +69,13 @@ router.get('/package/:packageId', getPackageById);
 router.post('/appointment', createAppointment);
 router.get('/appointments/by-date', getAppointmentsByDate);
 router.get('/team-member/appointments/:teamMemberId', getTeamMemberAppointments);
-router.route('/appointment/:appointmentId').put(updateAppointment).get(getAppointmentById)
+router.route('/appointment/:appointmentId').put(updateAppointment).get(getAppointmentById);
+
+// Add service to global category (for business-specific use)
+router.post('/global-category/:categoryId/service', addServiceToGlobalCategory);
 
 export default router;
+
+
 
 

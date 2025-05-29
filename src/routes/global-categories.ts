@@ -1,4 +1,4 @@
-import { getAllGlobalCategories , getGlobalCategoryById, createGlobalCategory, updateGlobalCategory, deleteGlobalCategory } from "controllers/globalCategory/globalCategoryController";
+import { getAllGlobalCategories, getGlobalCategoryById, createGlobalCategory, updateGlobalCategory, deleteGlobalCategory } from "controllers/globalCategory/globalCategoryController";
 import express from "express";
 
 const router = express.Router();

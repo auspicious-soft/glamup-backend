@@ -8,6 +8,7 @@ import {
   updatePassword 
 } from '../controllers/auth/userAuthController';
 import { reactivateUserAccount } from 'controllers/users/userProfileController';
+import { clientSignUp } from 'controllers/auth/clientAuthController';
 
 const router = Router();
 
@@ -25,5 +26,7 @@ router.post('/user/update-password', updatePassword);
 router.post('/user/profile/reactivate', reactivateUserAccount);
 
 
+// ***************** Client Auth Router *******************
+router.post('/client/signup', clientSignUp);
 
 export default router;

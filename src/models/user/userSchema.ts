@@ -105,7 +105,7 @@ const userSchema = new mongoose.Schema({
     },
        businessRole: {
       type: String,
-      enum: ["owner", "manager", "staff", "member", ""],
+      enum: ["owner", "manager", "staff", "member", "client"],
       default: "",
     },
   },

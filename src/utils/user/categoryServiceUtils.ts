@@ -207,23 +207,29 @@ export const validateAndProcessTeamMembers = async (
 export const buildServiceSearchQuery = (
   businessId: mongoose.Types.ObjectId,
   search?: string,
-  categoryId?: string
+  categoryId?: string,
+  isGlobalOnly?: boolean
 ): any => {
   let query: any = { 
     businessId: businessId,
     isDeleted: false 
   };
 
-  if (categoryId && mongoose.Types.ObjectId.isValid(categoryId)) {
-    query.categoryId = categoryId;
-  }
-
   if (search) {
     query.$or = [
-      { name: { $regex: search, $options: "i" } },
-      { description: { $regex: search, $options: "i" } },
-      { categoryName: { $regex: search, $options: "i" } }
+      { name: { $regex: search, $options: 'i' } },
+      { description: { $regex: search, $options: 'i' } },
+      { categoryName: { $regex: search, $options: 'i' } },
+      { tags: { $in: [new RegExp(search, 'i')] } }
     ];
+  }
+  
+  if (categoryId) {
+    query.categoryId = categoryId;
+  }
+  
+  if (isGlobalOnly) {
+    query.isGlobalCategory = true;
   }
   
   return query;
@@ -438,4 +444,6 @@ export const processServiceTags = (tags: any[]): string[] => {
     .filter(tag => typeof tag === 'string' && tag.trim() !== '')
     .map(tag => tag.trim());
 };
+
+
 

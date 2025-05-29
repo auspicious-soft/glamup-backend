@@ -6,7 +6,7 @@ import connectDB from "./config/db"
 import bodyParser from 'body-parser'
 import cookieParser from 'cookie-parser'
 
-import {admin, auth, globCategories, user} from "./routes"
+import {admin, auth, client, globCategories, user} from "./routes"
 import { authMiddleware } from "middleware/authMiddleware"
 
 const __filename = fileURLToPath(import.meta.url) 
@@ -48,6 +48,7 @@ app.use('/api', auth);
 app.use('/api/user',authMiddleware, user);
 app.use('/api/admin', admin);
 app.use('/api/global-categories', globCategories);
+app.use("/api/client", client);
 
 app.get("/", (_, res: any) => {
     res.send("Hello world entry point 🚀✅");

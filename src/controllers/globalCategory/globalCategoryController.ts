@@ -7,6 +7,8 @@ import {
 } from "../../lib/errors/error-response-handler";
 import GlobalCategory from "../../models/globalCategory/globalCategorySchema";
 import { startSession } from "../../utils/user/usercontrollerUtils";
+import mongoose from "mongoose";
+import UserBusinessProfile from "models/business/userBusinessProfileSchema";
 
 // Create a new global category (admin only)
 export const createGlobalCategory = async (req: Request, res: Response) => {
@@ -252,6 +254,69 @@ export const deleteGlobalCategory = async (req: Request, res: Response) => {
     await session.abortTransaction();
     session.endSession();
     
+    const parsedError = errorParser(error);
+    return errorResponseHandler(
+      parsedError.message,
+      parsedError.code,
+      res
+    );
+  }
+};
+
+// Get businesses by global category ID
+export const getBusinessesByGlobalCategory = async (req: Request, res: Response) => {
+  try {
+    const { categoryId } = req.params;
+    
+    if (!mongoose.Types.ObjectId.isValid(categoryId)) {
+      return errorResponseHandler(
+        "Invalid category ID format",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+    
+    // Check if the global category exists
+    const globalCategory = await GlobalCategory.findOne({
+      _id: categoryId,
+      isActive: true,
+      isDeleted: false
+    });
+    
+    if (!globalCategory) {
+      return errorResponseHandler(
+        "Global category not found or inactive",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+    
+    // Find all business profiles that have selected this category
+    const businessProfiles = await UserBusinessProfile.find({
+      "selectedCategories.categoryId": categoryId,
+      isDeleted: false,
+      status: "active"
+    }).select(
+      "businessName businessProfilePic PhoneNumber countryCode email businessDescription " +
+      "websiteLink facebookLink instagramLink messengerLink country "
+    ).sort({ createdAt: -1 });
+    
+    return successResponse(
+      res,
+      "Business profiles fetched successfully",
+      { 
+        category: {
+          _id: globalCategory._id,
+          name: globalCategory.name,
+          description: globalCategory.description || ""
+        },
+        businessProfiles,
+        count: businessProfiles.length
+      },
+      httpStatusCode.OK
+    );
+  } catch (error: any) {
+    console.error("Error fetching businesses by global category:", error);
     const parsedError = errorParser(error);
     return errorResponseHandler(
       parsedError.message,
