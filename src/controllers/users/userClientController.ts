@@ -37,6 +37,7 @@ export const createClient = async (req: Request, res: Response) => {
       email,
       phoneNumber,
       countryCode,
+      countryCallingCode,
       profilePicture,
       birthday,
       gender,
@@ -47,11 +48,11 @@ export const createClient = async (req: Request, res: Response) => {
       preferredTeamMembers,
     } = req.body;
 
-    if (!name || !email) {
+    if (!name || !email || !countryCallingCode) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
-        "Name and email are required",
+        "Name, email and countryCallingCode are required",
         httpStatusCode.BAD_REQUEST,
         res
       );
@@ -68,15 +69,15 @@ export const createClient = async (req: Request, res: Response) => {
           email,
           phoneNumber: phoneNumber || "",
           countryCode: countryCode || "+91",
+          countryCallingCode: countryCallingCode || "IN",
           profilePicture: profilePicture || "",
           birthday: birthday || null,
           gender: gender || "prefer_not_to_say",
           address: address || {
             street: "",
             city: "",
-            state: "",
+            region: "",
             country: "",
-            postalCode: "",
           },
           notes: notes || "",
           tags: tags || [],
@@ -197,6 +198,7 @@ export const updateClientById = async (req: Request, res: Response) => {
       email,
       phoneNumber,
       countryCode,
+      countryCallingCode,
       profilePicture,
       birthday,
       gender,
@@ -230,6 +232,7 @@ export const updateClientById = async (req: Request, res: Response) => {
         email,
         phoneNumber,
         countryCode,
+        countryCallingCode,
         profilePicture,
         birthday,
         gender,

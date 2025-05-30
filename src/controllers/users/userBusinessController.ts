@@ -89,6 +89,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       businessDescription,
       phoneNumber,
       countryCode,
+      countryCallingCode,
       email,
       websiteLink,
       facebookLink,
@@ -106,6 +107,16 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       session.endSession();
       return errorResponseHandler(
         "Business name is required",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+      if (!countryCallingCode) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "country Calling code is required",
         httpStatusCode.BAD_REQUEST,
         res
       );
@@ -194,6 +205,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
           businessDescription,
           PhoneNumber: phoneNumber,
           countryCode,
+          countryCallingCode,
           email,
           websiteLink,
           facebookLink,
@@ -326,6 +338,7 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       businessDescription,
       phoneNumber,
       countryCode,
+      countryCallingCode,
       email,
       websiteLink,
       facebookLink,
@@ -409,6 +422,7 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
           ...(businessDescription !== undefined && { businessDescription }),
           ...(phoneNumber && { PhoneNumber: phoneNumber }),
           ...(countryCode && { countryCode }),
+          ...(countryCallingCode && { countryCallingCode }),
           ...(email !== undefined && { email }),
           ...(websiteLink !== undefined && { websiteLink }),
           ...(facebookLink !== undefined && { facebookLink }),

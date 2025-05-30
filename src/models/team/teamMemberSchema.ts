@@ -30,6 +30,11 @@ const teamMemberSchema = new mongoose.Schema(
       type: String,
       default: "+91",
     },
+    countryCallingCode: {
+      type: String,
+      required: true,
+      default: "IN", 
+    },
     profilePicture: {
       type: String,
       default: "https://example.com/default-profile.png",

@@ -18,8 +18,8 @@ import { sendPasswordResetEmail } from 'utils/mails/mail';
 
 export const userSignUp = async (req: Request, res: Response) => {
   try {
-    const { fullName, email, password, phoneNumber, countryCode, profilePic } = req.body;
-    const requiredFields = { fullName, email, password, phoneNumber, countryCode, profilePic };
+    const { fullName, email, password, phoneNumber, countryCode, profilePic, countryCallingCode } = req.body;
+    const requiredFields = { fullName, email, password, phoneNumber, countryCode, profilePic, countryCallingCode };
     const missingFields = Object.entries(requiredFields)
       .filter(([_, value]) => !value)
       .map(([key]) => key);
@@ -54,6 +54,7 @@ export const userSignUp = async (req: Request, res: Response) => {
       password: await hashPassword(password),
       phoneNumber,
       countryCode,
+      countryCallingCode,
       profilePic,
       otp: {
         code: otp, 

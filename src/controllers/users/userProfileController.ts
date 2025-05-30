@@ -16,7 +16,7 @@ export const getUserProfile = async (req: Request, res: Response) => {
     if (!userId) return;
 
     const user = await User.findById(userId).select(
-      "fullName email phoneNumber countryCode profilePic isVerified verificationMethod isActive isDeleted authType role businessRole identifierId "
+      "fullName email phoneNumber countryCode countryCallingCode profilePic isVerified verificationMethod isActive isDeleted authType role businessRole identifierId "
     );
 
     if (!user) {
@@ -39,6 +39,7 @@ export const getUserProfile = async (req: Request, res: Response) => {
       email: user.email,
       phoneNumber: user.phoneNumber,
       countryCode: user.countryCode,
+      countryCallingCode: user.countryCallingCode,
       profilePicture: user.profilePic,
       isVerified: user.isVerified,
       verificationMethod: user.verificationMethod,
@@ -77,7 +78,7 @@ export const updateUserProfile = async (req: Request, res: Response) => {
     const userId = await validateUserAuth(req, res, session);
     if (!userId) return;
 
-    const { fullName, email, phoneNumber, countryCode } = req.body;
+    const { fullName, email, phoneNumber, countryCode, countryCallingCode } = req.body;
 
     const user = await User.findById(userId).session(session);
     if (!user) {
@@ -139,6 +140,9 @@ export const updateUserProfile = async (req: Request, res: Response) => {
     if (countryCode !== undefined) {
       updateData.countryCode = countryCode;
     }
+    if (countryCallingCode !== undefined) {
+      updateData.countryCallingCode = countryCallingCode;
+    }
 
     if (Object.keys(updateData).length === 0) {
       await session.abortTransaction();
@@ -154,7 +158,7 @@ export const updateUserProfile = async (req: Request, res: Response) => {
       userId,
       { $set: updateData },
       { new: true, session }
-    ).select("fullName email phoneNumber countryCode profilePicture");
+    ).select("fullName email phoneNumber countryCode countryCallingCode profilePicture");
 
     await session.commitTransaction();
     session.endSession();

@@ -34,6 +34,11 @@ const userSchema = new mongoose.Schema({
       required: true,
       default: "+91", 
     },
+    countryCallingCode: {
+      type: String,
+      required: true,
+      default: "IN", 
+    },
     password: {
       type: String,
       required: true,
@@ -105,7 +110,7 @@ const userSchema = new mongoose.Schema({
     },
        businessRole: {
       type: String,
-      enum: ["owner", "manager", "staff", "member", "client"],
+      enum: ["owner", "manager", "staff", "member", "client", ""],
       default: "",
     },
   },

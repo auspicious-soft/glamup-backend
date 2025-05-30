@@ -60,6 +60,11 @@ const userBusinessProfileSchema = new mongoose.Schema(
       type: String,
       default: "+91",
     },
+     countryCallingCode: {
+      type: String,
+      required: true,
+      default: "IN", 
+    },
     email: {
       type: String,
       default: "",
@@ -84,9 +89,8 @@ const userBusinessProfileSchema = new mongoose.Schema(
     address: {
       street: { type: String, default: "" },
       city: { type: String, default: "" },
-      state: { type: String, default: "" },
+      region: { type: String, default: "" },
       country: { type: String, default: "" },
-      postalCode: { type: String, default: "" },
     },
     country: {
       type: String,

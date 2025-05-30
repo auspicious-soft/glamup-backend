@@ -28,14 +28,14 @@ export const createTeamMember = async (req: Request, res: Response) => {
     const userId = await validateUserAuth(req, res, session);
     if (!userId) return;
 
-    const { name, email, phoneNumber, countryCode, gender, birthday } =
+    const { name, email, phoneNumber, countryCode, gender, birthday, countryCallingCode } =
       req.body;
-
-    if (!name || !email) {
+    
+    if (!name || !email || !countryCallingCode) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
-        "Name and email are required",
+        "Name, email and countryCallingCode are required",
         httpStatusCode.BAD_REQUEST,
         res
       );
@@ -71,6 +71,7 @@ export const createTeamMember = async (req: Request, res: Response) => {
           email,
           phoneNumber,
           countryCode,
+          countryCallingCode,
           gender,
           birthday,
           businessId: businessId,
@@ -231,6 +232,7 @@ export const updateTeamMember = async (req: Request, res: Response) => {
       email,
       phoneNumber,
       countryCode,
+      countryCallingCode,
       gender,
       birthday,
       profilePicture,
@@ -265,6 +267,8 @@ export const updateTeamMember = async (req: Request, res: Response) => {
     if (email !== undefined) updateData.email = email;
     if (phoneNumber !== undefined) updateData.phoneNumber = phoneNumber;
     if (countryCode !== undefined) updateData.countryCode = countryCode;
+    if (countryCallingCode !== undefined)
+      updateData.countryCallingCode = countryCallingCode;
     if (gender !== undefined) updateData.gender = gender;
     if (birthday !== undefined) updateData.birthday = birthday;
     if (profilePicture !== undefined)

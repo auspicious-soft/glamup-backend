@@ -7,9 +7,8 @@ const clientId = customAlphabet('0123456789abcdefghijklmnopqrstuvwxyz', 10);
 export interface Address {
   street: string;
   city: string;
-  state: string;
+  region: string;
   country: string;
-  postalCode: string;
 }
 
 export interface PreferredService {
@@ -28,6 +27,7 @@ export interface IClient {
   email: string;
   phoneNumber: string;
   countryCode: string;
+  countryCallingCode: string;
   profilePicture: string;
   birthday: Date | null;
   gender: "male" | "female" | "other" | "prefer_not_to_say";
@@ -74,6 +74,11 @@ const clientSchema = new mongoose.Schema(
       type: String,
       default: "+91",
     },
+    countryCallingCode: {
+      type: String,
+      required: true,
+      default: "IN", 
+    },
     profilePicture: {
       type: String,
       default: "https://example.com/default-client.png",
@@ -92,9 +97,8 @@ const clientSchema = new mongoose.Schema(
     address: {
       street: { type: String, default: "" },
       city: { type: String, default: "" },
-      state: { type: String, default: "" },
+      region: { type: String, default: "" },
       country: { type: String, default: "" },
-      postalCode: { type: String, default: "" },
     },
     tags: {
       type: [String],
