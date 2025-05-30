@@ -70,7 +70,8 @@ router.post('/appointment', createAppointment);
 router.get('/appointments/by-date', getAppointmentsByDate);
 router.get('/team-member/appointments/:teamMemberId', getTeamMemberAppointments);
 router.route('/appointment/:appointmentId').put(updateAppointment).get(getAppointmentById);
-router.post('/appointment/:appointmentId/cancel', cancelAppointment); // Route to cancel appointment
+router.post('/appointment/:appointmentId/cancel', cancelAppointment); 
+
 // Add service to global category (for business-specific use)
 router.post('/global-category/:categoryId/service', addServiceToGlobalCategory);
 
