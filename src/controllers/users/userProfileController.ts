@@ -158,13 +158,55 @@ export const updateUserProfile = async (req: Request, res: Response) => {
       userId,
       { $set: updateData },
       { new: true, session }
-    ).select("fullName email phoneNumber countryCode countryCallingCode profilePicture");
+    ).select("fullName email phoneNumber countryCode countryCallingCode profilePic isVerified verificationMethod isActive isDeleted authType role businessRole identifierId");
+
+    if (!updatedUser) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Failed to update user profile",
+        httpStatusCode.INTERNAL_SERVER_ERROR,
+        res
+      );
+    }
 
     await session.commitTransaction();
     session.endSession();
 
+    // Get business profile data to match getUserProfile response format
+    const businessProfile = await UserBusinessProfile.findOne({
+      ownerId: userId,
+      isDeleted: false,
+      status: "active",
+    }).select("_id businessName");
+
+    // Format response to match getUserProfile
+    const profileData = {
+      userId: updatedUser._id,
+      fullName: updatedUser.fullName,
+      email: updatedUser.email,
+      phoneNumber: updatedUser.phoneNumber,
+      countryCode: updatedUser.countryCode,
+      countryCallingCode: updatedUser.countryCallingCode,
+      profilePicture: updatedUser.profilePic,
+      isVerified: updatedUser.isVerified,
+      verificationMethod: updatedUser.verificationMethod,
+      isActive: updatedUser.isActive,
+      isDeleted: updatedUser.isDeleted,
+      authType: updatedUser.authType,
+      role: updatedUser.role,
+      businessRole: updatedUser.businessRole,
+      identifierId: updatedUser.identifierId,
+      business: businessProfile
+        ? {
+            businessId: businessProfile._id,
+            businessName: businessProfile.businessName,
+          }
+        : null,
+    };
+
     return successResponse(res, "User profile updated successfully", {
-      profile: updatedUser
+      profile: profileData,
     });
   } catch (error: any) {
     await session.abortTransaction();
@@ -410,3 +452,4 @@ export const reactivateUserAccount = async (req: Request, res: Response) => {
     });
   }
 };
+
