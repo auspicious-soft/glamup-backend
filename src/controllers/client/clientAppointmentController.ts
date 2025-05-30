@@ -13,13 +13,19 @@ import RegisteredClient from "../../models/registeredClient/registeredClientSche
 import TeamMember from "../../models/team/teamMemberSchema";
 import { isTimeSlotAvailable } from "../../utils/appointment/appointmentUtils";
 import ClientAppointment from "../../models/clientAppointment/clientAppointmentSchema";
-import { startSession } from "../../utils/user/usercontrollerUtils";
+import Appointment from "models/appointment/appointmentSchema";
+import { customAlphabet } from "nanoid";
+
+// Create a nanoid generator for appointment IDs
+const appointmentId = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 10);
 
 // Create appointment as a client
 export const createClientAppointment = async (req: Request, res: Response) => {
-  const session = await startSession();
+  const session = await mongoose.startSession();
   
   try {
+    session.startTransaction();
+    
     const { 
       clientId, 
       businessId, 
@@ -90,47 +96,22 @@ export const createClientAppointment = async (req: Request, res: Response) => {
       );
     }
     
-    // Check if category exists (could be global or business-specific)
-    let category;
-    let isGlobalCategory = false;
+    // Check if category exists
+    const category = await Category.findOne({
+      _id: categoryId,
+      businessId: businessId,
+      isActive: true,
+      isDeleted: false
+    });
     
-    // Check if it's a global category
-    isGlobalCategory = business.selectedCategories.some(
-      cat => cat.categoryId.toString() === categoryId
-    );
-    
-    if (isGlobalCategory) {
-      const globalCat = business.selectedCategories.find(
-        cat => cat.categoryId.toString() === categoryId
+    if (!category) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Category not found or inactive",
+        httpStatusCode.NOT_FOUND,
+        res
       );
-      if (!globalCat) {
-        await session.abortTransaction();
-        session.endSession();
-        return errorResponseHandler(
-          "Category not found",
-          httpStatusCode.NOT_FOUND,
-          res
-        );
-      }
-      category = { _id: globalCat.categoryId, name: globalCat.name };
-    } else {
-      // Check if it's a business-specific category
-      category = await Category.findOne({
-        _id: categoryId,
-        businessId: businessId,
-        isActive: true,
-        isDeleted: false
-      });
-      
-      if (!category) {
-        await session.abortTransaction();
-        session.endSession();
-        return errorResponseHandler(
-          "Category not found",
-          httpStatusCode.NOT_FOUND,
-          res
-        );
-      }
     }
     
     // Check if services exist and belong to the category and business
@@ -177,8 +158,12 @@ export const createClientAppointment = async (req: Request, res: Response) => {
     const totalPrice = services.reduce((sum, service) => sum + service.price, 0);
     const finalEndTime = endTime || calculateEndTime(startTime, services);
     
-    // Create appointment
-    const appointmentData = {
+    // Generate a unique appointment ID to link both records
+    const uniqueAppointmentId = generateAppointmentId();
+    
+    // Create client appointment
+    const clientAppointmentData = {
+      appointmentId: uniqueAppointmentId,
       clientId: client._id,
       businessId: business._id,
       businessName: business.businessName,
@@ -222,7 +207,53 @@ export const createClientAppointment = async (req: Request, res: Response) => {
       }
     };
     
-    const newAppointment = await ClientAppointment.create([appointmentData], { session });
+    // Create business appointment (for business and team member views)
+    const businessAppointmentData = {
+      appointmentId: uniqueAppointmentId, // Same ID to link the records
+      clientId: client._id,
+      clientName: client.fullName,
+      clientEmail: client.email,
+      clientPhone: client.phoneNumber || "",
+      
+      teamMemberId: teamMember._id,
+      teamMemberName: teamMember.name,
+      
+      businessId: business._id,
+      
+      date: appointmentDate,
+      endDate: appointmentDate,
+      startTime,
+      endTime: finalEndTime,
+      duration: totalDuration,
+      
+      categoryId: category._id,
+      categoryName: category.name,
+      
+      services: services.map(service => ({
+        serviceId: service._id,
+        name: service.name,
+        duration: service.duration,
+        price: service.price
+      })),
+      
+      totalPrice,
+      discount: 0,
+      finalPrice: totalPrice,
+      currency: "INR",
+      
+      paymentStatus: "pending",
+      status: "pending",
+      
+      createdBy: business.ownerId, // Use business owner as creator
+      updatedBy: business.ownerId,
+      
+      // Add a reference to indicate this was created by a client
+      createdVia: "client_booking"
+    };
+    
+    // Create both records
+    const newClientAppointment = await ClientAppointment.create([clientAppointmentData], { session });
+    const newBusinessAppointment = await Appointment.create([businessAppointmentData], { session });
     
     await session.commitTransaction();
     session.endSession();
@@ -230,7 +261,7 @@ export const createClientAppointment = async (req: Request, res: Response) => {
     return successResponse(
       res,
       "Appointment created successfully",
-      { appointment: newAppointment[0] },
+      { appointment: newClientAppointment[0] },
       httpStatusCode.CREATED
     );
   } catch (error: any) {
@@ -245,6 +276,12 @@ export const createClientAppointment = async (req: Request, res: Response) => {
       res
     );
   }
+};
+
+// Helper function to generate a unique appointment ID
+const generateAppointmentId = (): string => {
+  // You can use a timestamp and random string for uniqueness
+  return `APT-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
 };
 
 // Helper function to calculate end time based on services duration
@@ -393,7 +430,7 @@ export const getClientAppointmentById = async (req: Request, res: Response) => {
 
 // Cancel an appointment
 export const cancelClientAppointment = async (req: Request, res: Response) => {
-  const session = await startSession();
+  const session = await mongoose.startSession();
   
   try {
     session.startTransaction();
@@ -411,14 +448,14 @@ export const cancelClientAppointment = async (req: Request, res: Response) => {
       );
     }
     
-    // Find appointment
-    const appointment = await ClientAppointment.findOne({
+    // Find client appointment
+    const clientAppointment = await ClientAppointment.findOne({
       _id: appointmentId,
       isDeleted: false,
       status: { $in: ["pending", "confirmed"] }
     });
     
-    if (!appointment) {
+    if (!clientAppointment) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
@@ -428,13 +465,28 @@ export const cancelClientAppointment = async (req: Request, res: Response) => {
       );
     }
     
-    // Update appointment
-    appointment.status = "cancelled";
-    appointment.cancellationReason = cancellationReason || "Cancelled by client";
-    appointment.cancellationDate = new Date();
-    appointment.cancellationBy = "client";
+    // Update client appointment
+    clientAppointment.status = "cancelled";
+    clientAppointment.cancellationReason = cancellationReason || "Cancelled by client";
+    clientAppointment.cancellationDate = new Date();
+    clientAppointment.cancellationBy = "client";
     
-    await appointment.save({ session });
+    await clientAppointment.save({ session });
+    
+    // Find and update corresponding business appointment
+    const businessAppointment = await Appointment.findOne({
+      appointmentId: clientAppointment.appointmentId,
+      isDeleted: false
+    });
+    
+    if (businessAppointment) {
+      businessAppointment.status = "cancelled";
+      businessAppointment.cancellationReason = cancellationReason || "Cancelled by client";
+      businessAppointment.cancellationDate = new Date();
+      businessAppointment.cancellationBy = "client";
+      
+      await businessAppointment.save({ session });
+    }
     
     await session.commitTransaction();
     session.endSession();
@@ -442,7 +494,7 @@ export const cancelClientAppointment = async (req: Request, res: Response) => {
     return successResponse(
       res,
       "Appointment cancelled successfully",
-      { appointment }
+      { appointment: clientAppointment }
     );
   } catch (error: any) {
     await session.abortTransaction();
@@ -460,7 +512,7 @@ export const cancelClientAppointment = async (req: Request, res: Response) => {
 
 // Reschedule an appointment
 export const rescheduleClientAppointment = async (req: Request, res: Response) => {
-  const session = await startSession();
+  const session = await mongoose.startSession();
   
   try {
     session.startTransaction();
@@ -488,14 +540,14 @@ export const rescheduleClientAppointment = async (req: Request, res: Response) =
       );
     }
     
-    // Find appointment
-    const appointment = await ClientAppointment.findOne({
+    // Find client appointment
+    const clientAppointment = await ClientAppointment.findOne({
       _id: appointmentId,
       isDeleted: false,
       status: { $in: ["pending", "confirmed"] }
     });
     
-    if (!appointment) {
+    if (!clientAppointment) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
@@ -506,11 +558,11 @@ export const rescheduleClientAppointment = async (req: Request, res: Response) =
     }
     
     // If team member is being changed, validate
-    let teamMember: any = null;
-    if (teamMemberId && teamMemberId !== appointment.teamMemberId.toString()) {
+    let teamMember = null;
+    if (teamMemberId && teamMemberId !== clientAppointment.teamMemberId.toString()) {
       teamMember = await TeamMember.findOne({
         _id: teamMemberId,
-        businessId: appointment.businessId,
+        businessId: clientAppointment.businessId,
         isActive: true,
         isDeleted: false
       });
@@ -528,12 +580,12 @@ export const rescheduleClientAppointment = async (req: Request, res: Response) =
     
     // Check if time slot is available
     const appointmentDate = new Date(date);
-    const finalTeamMemberId = teamMemberId || appointment.teamMemberId;
+    const finalTeamMemberId = teamMemberId || clientAppointment.teamMemberId;
     
     // Calculate end time if not provided
     let finalEndTime = endTime;
     if (!finalEndTime) {
-      const services = appointment.services;
+      const services = clientAppointment.services;
       const totalDuration = services.reduce((sum, service) => sum + service.duration, 0);
       
       const [hours, minutes] = startTime.split(':').map(Number);
@@ -564,15 +616,19 @@ export const rescheduleClientAppointment = async (req: Request, res: Response) =
       );
     }
     
-    // Create a new appointment as a copy of the old one
-    const newAppointmentData = {
-      ...appointment.toObject(),
+    // Generate a new unique appointment ID for the rescheduled appointment
+    const newUniqueAppointmentId = generateAppointmentId();
+    
+    // Create a new client appointment as a copy of the old one
+    const newClientAppointmentData = {
+      ...clientAppointment.toObject(),
       _id: undefined,
+      appointmentId: newUniqueAppointmentId,
       date: appointmentDate,
       endDate: appointmentDate,
       startTime,
       endTime: finalEndTime,
-      parentAppointmentId: appointment._id,
+      parentAppointmentId: clientAppointment._id,
       isRescheduled: true,
       status: "pending",
       createdAt: undefined,
@@ -580,22 +636,62 @@ export const rescheduleClientAppointment = async (req: Request, res: Response) =
     };
     
     if (teamMember) {
-      newAppointmentData.teamMemberId = teamMember._id;
-      newAppointmentData.teamMemberName = teamMember.name;
-      newAppointmentData.teamMemberProfilePic = teamMember.profilePicture || "";
+      newClientAppointmentData.teamMemberId = teamMember._id;
+      newClientAppointmentData.teamMemberName = teamMember.name;
+      newClientAppointmentData.teamMemberProfilePic = teamMember.profilePicture || "";
     }
     
-    // Mark the old appointment as cancelled due to reschedule
-    appointment.status = "cancelled";
-    appointment.cancellationReason = "Rescheduled by client";
-    appointment.cancellationDate = new Date();
-    appointment.cancellationBy = "client";
-    appointment.isRescheduled = true;
+    // Mark the old client appointment as cancelled due to reschedule
+    clientAppointment.status = "cancelled";
+    clientAppointment.cancellationReason = "Rescheduled by client";
+    clientAppointment.cancellationDate = new Date();
+    clientAppointment.cancellationBy = "client";
+    clientAppointment.isRescheduled = true;
     
-    await appointment.save({ session });
+    await clientAppointment.save({ session });
     
-    // Create the new appointment
-    const newAppointment = await ClientAppointment.create([newAppointmentData], { session });
+    // Create the new client appointment
+    const newClientAppointment = await ClientAppointment.create([newClientAppointmentData], { session });
+    
+    // Find and update corresponding business appointment
+    const businessAppointment = await Appointment.findOne({
+      appointmentId: clientAppointment.appointmentId,
+      isDeleted: false
+    });
+    
+    if (businessAppointment) {
+      // Mark old business appointment as cancelled
+      businessAppointment.status = "cancelled";
+      businessAppointment.cancellationReason = "Rescheduled by client";
+      businessAppointment.cancellationDate = new Date();
+      businessAppointment.cancellationBy = "client";
+      businessAppointment.isRescheduled = true;
+      
+      await businessAppointment.save({ session });
+      
+      // Create new business appointment
+      const newBusinessAppointmentData = {
+        ...businessAppointment.toObject(),
+        _id: undefined,
+        appointmentId: newUniqueAppointmentId,
+        date: appointmentDate,
+        endDate: appointmentDate,
+        startTime,
+        endTime: finalEndTime,
+        parentAppointmentId: businessAppointment._id,
+        status: "pending",
+        createdAt: undefined,
+        updatedAt: undefined,
+        createdVia: "client_booking"
+      };
+      
+      if (teamMember) {
+        newBusinessAppointmentData.teamMemberId = teamMember._id;
+        newBusinessAppointmentData.teamMemberName = teamMember.name;
+      }
+      
+      await Appointment.create([newBusinessAppointmentData], { session });
+    }
     
     await session.commitTransaction();
     session.endSession();
@@ -604,8 +700,8 @@ export const rescheduleClientAppointment = async (req: Request, res: Response) =
       res,
       "Appointment rescheduled successfully",
       { 
-        oldAppointment: appointment,
-        newAppointment: newAppointment[0]
+        oldAppointment: clientAppointment,
+        newAppointment: newClientAppointment[0]
       }
     );
   } catch (error: any) {

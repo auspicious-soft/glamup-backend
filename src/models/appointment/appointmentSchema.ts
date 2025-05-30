@@ -44,7 +44,10 @@ export interface IAppointment {
   paymentStatus: "pending" | "partial" | "paid" | "refunded";
   status: "pending" | "confirmed" | "cancelled" | "completed" | "no_show";
   cancellationReason: string;
+  cancellationDate: Date | null;
+  cancellationBy: "client" | "business" | null;
   parentAppointmentId: mongoose.Types.ObjectId | null;
+  isRescheduled: boolean;
   createdBy: mongoose.Types.ObjectId;
   updatedBy: mongoose.Types.ObjectId;
   isDeleted: boolean;
@@ -193,13 +196,24 @@ const appointmentSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
-    
+     cancellationDate: {
+      type: Date,
+      default: null,
+    },
+    cancellationBy: {
+      type: String,
+      enum: ["client", "business", null],
+      default: null,
+    },
     parentAppointmentId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Appointment',
       default: null,
     },
-    
+     isRescheduled: {
+      type: Boolean,
+      default: false,
+    },
     // Tracking
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
@@ -210,6 +224,11 @@ const appointmentSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: true,
+    },
+    createdVia: {
+      type: String,
+      enum: ["business", "client_booking"],
+      default: "business"
     },
     isDeleted: {
       type: Boolean,
@@ -245,4 +264,5 @@ appointmentSchema.pre('save', function(next) {
 const Appointment = mongoose.model<IAppointmentDocument>("Appointment", appointmentSchema);
 
 export default Appointment;
+
 

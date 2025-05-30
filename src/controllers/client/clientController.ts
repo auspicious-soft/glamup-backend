@@ -271,3 +271,4 @@ export const getBusinessCategoryServices = async (req: Request, res: Response) =
     );
   }
 };
+

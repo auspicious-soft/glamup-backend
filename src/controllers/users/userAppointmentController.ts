@@ -25,6 +25,7 @@ import {
   validateRequiredAppointmentFields
 } from "../../utils/appointment/appointmentUtils";
 import { validateUserAuth, startSession, handleTransactionError } from "../../utils/user/usercontrollerUtils";
+import ClientAppointment from "models/clientAppointment/clientAppointmentSchema";
 
 
 export const createAppointment = async (req: Request, res: Response) => {
@@ -289,6 +290,128 @@ export const updateAppointment = async (req: Request, res: Response) => {
     const existingAppointment = await validateAppointmentAccess(appointmentId, businessId, res, session);
     if (!existingAppointment) return;
     
+    // Check if this appointment was created by a client
+    // First, check if the createdVia field exists and equals "client_booking"
+    // If not, check if there's a corresponding client appointment with the same appointmentId
+    let isClientBooking = existingAppointment.createdVia === "client_booking";
+    
+    if (!isClientBooking) {
+      // Double-check by looking for a matching client appointment
+      const clientAppointment = await ClientAppointment.findOne({
+        appointmentId: existingAppointment.appointmentId,
+        isDeleted: false
+      });
+      
+      isClientBooking = !!clientAppointment;
+    }
+    
+    // For client bookings, only allow status updates and cancellation
+    if (isClientBooking) {
+      const { status, cancellationReason } = req.body;
+      
+      // Only allow status updates to "cancelled" or other non-structural changes
+      if (req.body.teamMemberId || req.body.categoryId || req.body.serviceIds || 
+          req.body.startDate || req.body.endDate || req.body.startTime || req.body.endTime) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          "Cannot modify core appointment details for client bookings. You can only update the status or cancel the appointment.",
+          httpStatusCode.FORBIDDEN,
+          res
+        );
+      }
+      
+      // If cancelling, update both business and client appointment records
+      if (status === "cancelled") {
+        // Update business appointment
+        await Appointment.findByIdAndUpdate(
+          appointmentId,
+          {
+            $set: {
+              status: "cancelled",
+              cancellationReason: cancellationReason || "Cancelled by business",
+              cancellationDate: new Date(),
+              cancellationBy: "business",
+              updatedBy: new mongoose.Types.ObjectId(userId)
+            }
+          },
+          { session }
+        );
+        
+        // Find and update corresponding client appointment
+        const clientAppointment = await ClientAppointment.findOne({
+          appointmentId: existingAppointment.appointmentId,
+          isDeleted: false
+        });
+        
+        if (clientAppointment) {
+          await ClientAppointment.findByIdAndUpdate(
+            clientAppointment._id,
+            {
+              $set: {
+                status: "cancelled",
+                cancellationReason: cancellationReason || "Cancelled by business",
+                cancellationDate: new Date(),
+                cancellationBy: "business"
+              }
+            },
+            { session }
+          );
+        }
+        
+        const updatedAppointment = await Appointment.findById(appointmentId).session(session);
+        
+        await session.commitTransaction();
+        session.endSession();
+        
+        return successResponse(
+          res,
+          "Appointment cancelled successfully",
+          { appointment: updatedAppointment }
+        );
+      }
+      
+      // For non-cancellation status updates
+      const allowedUpdates = {
+        status: status,
+        updatedBy: new mongoose.Types.ObjectId(userId)
+      };
+      
+      await Appointment.findByIdAndUpdate(
+        appointmentId,
+        { $set: allowedUpdates },
+        { session }
+      );
+      
+      // Update client appointment status if it exists
+      if (status) {
+        const clientAppointment = await ClientAppointment.findOne({
+          appointmentId: existingAppointment.appointmentId,
+          isDeleted: false
+        });
+        
+        if (clientAppointment) {
+          await ClientAppointment.findByIdAndUpdate(
+            clientAppointment._id,
+            { $set: { status: status } },
+            { session }
+          );
+        }
+      }
+      
+      const updatedAppointment = await Appointment.findById(appointmentId).session(session);
+      
+      await session.commitTransaction();
+      session.endSession();
+      
+      return successResponse(
+        res,
+        "Appointment status updated successfully",
+        { appointment: updatedAppointment }
+      );
+    }
+    
+    // For business-created appointments, proceed with normal update flow
     const { teamMemberId, status } = req.body;
     
     const teamMemberChanged = isTeamMemberChanged(teamMemberId, existingAppointment);
@@ -411,4 +534,93 @@ export const getAppointmentById = async (req: Request, res: Response) => {
     });
   }
 };
+
+// Cancel an appointment (works for both business-created and client-created appointments)
+export const cancelAppointment = async (req: Request, res: Response) => {
+  const session = await startSession();
+  
+  try {
+    const userId = await validateUserAuth(req, res, session);
+    if (!userId) return;
+    
+    const { appointmentId } = req.params;
+    const { cancellationReason } = req.body;
+    
+    const businessId = await validateBusinessProfile(userId, res, session);
+    if (!businessId) return;
+    
+    const existingAppointment = await validateAppointmentAccess(appointmentId, businessId, res, session);
+    if (!existingAppointment) return;
+    
+    if (existingAppointment.status === "cancelled") {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Appointment is already cancelled",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+    
+    // Update business appointment
+    await Appointment.findByIdAndUpdate(
+      appointmentId,
+      {
+        $set: {
+          status: "cancelled",
+          cancellationReason: cancellationReason || "Cancelled by business",
+          cancellationDate: new Date(),
+          cancellationBy: "business",
+          updatedBy: new mongoose.Types.ObjectId(userId)
+        }
+      },
+      { session }
+    );
+    
+    // Check if this was a client booking
+    let isClientBooking = existingAppointment.createdVia === "client_booking";
+    
+    // Find corresponding client appointment
+    const clientAppointment = await ClientAppointment.findOne({
+      appointmentId: existingAppointment.appointmentId,
+      isDeleted: false
+    });
+    
+    // If client appointment exists, update it too
+    if (clientAppointment) {
+      isClientBooking = true;
+      await ClientAppointment.findByIdAndUpdate(
+        clientAppointment._id,
+        {
+          $set: {
+            status: "cancelled",
+            cancellationReason: cancellationReason || "Cancelled by business",
+            cancellationDate: new Date(),
+            cancellationBy: "business"
+          }
+        },
+        { session }
+      );
+    }
+    
+    const updatedAppointment = await Appointment.findById(appointmentId).session(session);
+    
+    await session.commitTransaction();
+    session.endSession();
+    
+    return successResponse(
+      res,
+      "Appointment cancelled successfully",
+      { 
+        appointment: updatedAppointment,
+        isClientBooking: isClientBooking
+      }
+    );
+  } catch (error: any) {
+    return handleTransactionError(session, error, res);
+  }
+};
+
+
+
 

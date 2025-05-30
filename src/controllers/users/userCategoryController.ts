@@ -95,15 +95,37 @@ export const getAllCategories = async (req: Request, res: Response) => {
     });
 
     const globalCategories = businessProfile?.selectedCategories || [];
-    const formattedGlobalCategories = globalCategories.map(gc => ({
-      _id: gc.categoryId,
-      name: gc.name,
-      description: "",
-      businessId: businessId,
-      isActive: gc.isActive,
-      isDeleted: false,
-      isGlobal: true
-    }));
+    
+    // Get the global category IDs
+    const globalCategoryIds = globalCategories.map(gc => gc.categoryId);
+    
+    // Fetch the full details of global categories from GlobalCategory collection
+    const globalCategoryDetails = await mongoose.model("GlobalCategory").find({
+      _id: { $in: globalCategoryIds },
+      isActive: true,
+      isDeleted: false
+    });
+    
+    // Create a map for quick lookup
+    const globalCategoryMap = new Map();
+    globalCategoryDetails.forEach(gc => {
+      globalCategoryMap.set(gc._id.toString(), gc);
+    });
+    
+    // Format global categories with descriptions from the GlobalCategory collection
+    const formattedGlobalCategories = globalCategories.map(gc => {
+      const globalCatDetails = globalCategoryMap.get(gc.categoryId.toString());
+      return {
+        _id: gc.categoryId,
+        name: gc.name,
+        description: globalCatDetails?.description || "",
+        icon: globalCatDetails?.icon || "",
+        businessId: businessId,
+        isActive: gc.isActive,
+        isDeleted: false,
+        isGlobal: true
+      };
+    });
 
     const allCategories = [...categories, ...formattedGlobalCategories];
 
