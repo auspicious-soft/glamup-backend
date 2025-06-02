@@ -23,6 +23,7 @@ import {
   processServiceTags
 } from "../../utils/user/categoryServiceUtils";
 import UserBusinessProfile from "models/business/userBusinessProfileSchema";
+import mongoose from "mongoose";
 // import UserBusinessProfile from "../../models/userBusinessProfile/userBusinessProfileSchema";
 // import { validateObjectId } from "../../utils/user/userUtils";
 
@@ -139,10 +140,11 @@ export const getAllServices = async (req: Request, res: Response) => {
     const categoryId = req.query.categoryId as string;
     const isGlobalOnly = req.query.isGlobalOnly === 'true';
 
-    // Build base query
+    // Build base query - add isActive: true to only show active services
     let query: any = {
       businessId: businessId,
-      isDeleted: false
+      isDeleted: false,
+      isActive: true
     };
     
     // Add search conditions if provided
@@ -171,7 +173,8 @@ export const getAllServices = async (req: Request, res: Response) => {
     const globalCategoryServices = await Service.find({
       businessId: businessId,
       isGlobalCategory: true,
-      isDeleted: false
+      isDeleted: false,
+      isActive: true // Only show active services
     });
     
     console.log("Global category services count:", globalCategoryServices.length);
@@ -252,6 +255,17 @@ export const updateService = async (req: Request, res: Response) => {
     const existingService = await validateServiceAccess(serviceId, businessId, res, session);
     if (!existingService) return;
 
+    // Check if the service is inactive
+    if (!(existingService as any).isActive) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "This service is inactive and cannot be updated. Please activate the service first.",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
     const { 
       name, 
       categoryId, 
@@ -285,6 +299,17 @@ export const updateService = async (req: Request, res: Response) => {
       // For regular services, allow category change with validation
       const category = await validateCategoryAccess(categoryId, businessId, res, session);
       if (!category) return;
+      
+      // Check if the category is active
+      if (!(category as any).isActive) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          "Cannot assign service to an inactive category",
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
       
       updateData.categoryId = categoryId;
       updateData.categoryName = (category as any).name;
@@ -364,7 +389,7 @@ export const getCategoriesWithServices = async (req: Request, res: Response) => 
     const businessId = await validateUserAndGetBusiness(req, res);
     if (!businessId) return;
 
-    // Get regular categories
+    // Get regular categories - only active ones
     const categories = await Category.find({ 
       businessId: businessId,
       isActive: true,
@@ -377,12 +402,29 @@ export const getCategoriesWithServices = async (req: Request, res: Response) => 
       isDeleted: false
     });
 
-    // Get global categories
-    const globalCategories = businessProfile?.selectedCategories || [];
+    // Get global categories - only active ones
+    const globalCategories = businessProfile?.selectedCategories?.filter(gc => gc.isActive) || [];
+    
+    // Get global category IDs
+    const globalCategoryIds = globalCategories.map(gc => gc.categoryId);
+    
+    // Fetch global category details including descriptions
+    const globalCategoryDetails = await mongoose.model("GlobalCategory").find({
+      _id: { $in: globalCategoryIds },
+      isActive: true,
+      isDeleted: false
+    });
+    
+    // Create a map for quick lookup
+    const globalCategoryMap = new Map();
+    globalCategoryDetails.forEach(gc => {
+      globalCategoryMap.set(gc._id.toString(), gc);
+    });
     
     // Process regular categories with their services
     const regularCategoriesWithServices = await Promise.all(
       categories.map(async (category) => {
+        // Only get active services
         const services = await Service.find({
           categoryId: category._id,
           businessId: businessId,
@@ -395,33 +437,39 @@ export const getCategoriesWithServices = async (req: Request, res: Response) => 
           name: category.name,
           description: category.description,
           isGlobal: false,
-          services: services
+          services: services // This might be an empty array, which is fine
         };
       })
     );
     
     const globalCategoriesWithServices = await Promise.all(
       globalCategories.map(async (globalCat) => {
+        // Only get active services
         const services = await Service.find({
           categoryId: globalCat.categoryId,
           businessId: businessId,
           isActive: true,
           isDeleted: false
         }).sort({ name: 1 });
+        
+        // Get global category details
+        const globalCatDetails = globalCategoryMap.get(globalCat.categoryId.toString());
 
         return {
           _id: globalCat.categoryId,
           name: globalCat.name,
-          description: "",
+          description: globalCatDetails?.description || "",
+          icon: globalCatDetails?.icon || "",
           isGlobal: true,
-          services: services
+          services: services // This might be an empty array, which is fine
         };
       })
     );
     
+    // Include all categories, even those with no services
     const allCategoriesWithServices = [
       ...regularCategoriesWithServices,
-      ...globalCategoriesWithServices.filter(cat => cat.services.length > 0) // Only include global categories with services
+      ...globalCategoriesWithServices
     ];
 
     return successResponse(res, "Categories with services fetched successfully", {

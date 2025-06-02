@@ -80,7 +80,11 @@ export const getAllCategories = async (req: Request, res: Response) => {
     const { page, limit, skip } = buildPaginationParams(req);
     const search = req.query.search as string;
 
-    const query = buildCategorySearchQuery(businessId, search);
+    // Update query to only include active categories
+    const query = {
+      ...buildCategorySearchQuery(businessId, search),
+      isActive: true
+    };
 
     const totalCategories = await Category.countDocuments(query);
     
@@ -94,7 +98,8 @@ export const getAllCategories = async (req: Request, res: Response) => {
       isDeleted: false
     });
 
-    const globalCategories = businessProfile?.selectedCategories || [];
+    // Only include active global categories
+    const globalCategories = businessProfile?.selectedCategories?.filter(gc => gc.isActive) || [];
     
     // Get the global category IDs
     const globalCategoryIds = globalCategories.map(gc => gc.categoryId);
@@ -284,62 +289,101 @@ export const updateCategory = async (req: Request, res: Response) => {
   }
 };
 
-export const deleteCategory = async (req: Request, res: Response) => {
+export const deleteCategories = async (req: Request, res: Response) => {
   const session = await startSession();
 
   try {
     const businessId = await validateUserAndGetBusiness(req, res, session);
     if (!businessId) return;
 
-    const { categoryId } = req.params;
-    
-    // Check if this is a global category
-    const businessProfile = await UserBusinessProfile.findOne({
-      _id: businessId,
-      "selectedCategories.categoryId": categoryId,
-      isDeleted: false
-    }).session(session);
-    
-    if (businessProfile) {
+    const { categoryIds } = req.body;
+
+    if (!categoryIds || !Array.isArray(categoryIds) || categoryIds.length === 0) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
-        "Cannot delete global category. Global categories can only be removed from your business profile settings.",
-        httpStatusCode.FORBIDDEN,
-        res
-      );
-    }
-    
-    // Continue with regular category deletion
-    const existingCategory = await validateCategoryAccess(categoryId, businessId, res, session);
-    if (!existingCategory) return;
-
-    const servicesUsingCategory = await Service.countDocuments({
-      categoryId: categoryId,
-      businessId: businessId,
-      isDeleted: false
-    }).session(session);
-
-    if (servicesUsingCategory > 0) {
-      await session.abortTransaction();
-      session.endSession();
-      return errorResponseHandler(
-        "Cannot delete category because it has services associated with it. Please delete or reassign those services first.",
+        "Please provide an array of category IDs",
         httpStatusCode.BAD_REQUEST,
         res
       );
     }
 
-    await Category.findByIdAndUpdate(
-      categoryId,
-      { $set: { isDeleted: true } },
-      { session }
-    );
+    // First check if any of the categories are global categories
+    for (const categoryId of categoryIds) {
+      if (!(await validateObjectId(categoryId, "Category", res, session))) {
+        return; // validateObjectId already handles the error response
+      }
+      
+      // Check if this is a global category
+      const businessProfile = await UserBusinessProfile.findOne({
+        _id: businessId,
+        "selectedCategories.categoryId": categoryId,
+        isDeleted: false
+      }).session(session);
+      
+      if (businessProfile) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          `Cannot delete global category (ID: ${categoryId}). Global categories can only be removed from your business profile settings.`,
+          httpStatusCode.FORBIDDEN,
+          res
+        );
+      }
+    }
+
+    // Then validate access to all categories before making any changes
+    const categoriesToDeactivate = [];
+    
+    for (const categoryId of categoryIds) {
+      const existingCategory = await validateCategoryAccess(categoryId, businessId, res, session);
+      if (!existingCategory) return; // validateCategoryAccess already handles the error response
+      
+      categoriesToDeactivate.push({
+        id: categoryId,
+        name: (existingCategory as any).name
+      });
+    }
+
+    // Now deactivate all categories and their services
+    const deactivatedCategories = [];
+    let totalServicesDeactivated = 0;
+    
+    for (const category of categoriesToDeactivate) {
+      // Set category to inactive instead of deleted
+      await Category.findByIdAndUpdate(
+        category.id,
+        { $set: { isActive: false } },
+        { session }
+      );
+
+      // Set all services in this category to inactive
+      const result = await Service.updateMany(
+        {
+          categoryId: category.id,
+          businessId: businessId,
+          isDeleted: false
+        },
+        { $set: { isActive: false } },
+        { session }
+      );
+
+      deactivatedCategories.push({
+        id: category.id,
+        name: category.name,
+        servicesDeactivated: result.modifiedCount
+      });
+      
+      totalServicesDeactivated += result.modifiedCount;
+    }
 
     await session.commitTransaction();
     session.endSession();
 
-    return successResponse(res, "Category deleted successfully");
+    return successResponse(res, "Categories and related services deactivated successfully", {
+      deactivatedCategories,
+      totalServicesDeactivated
+    });
   } catch (error: any) {
     return handleTransactionError(session, error, res);
   }
@@ -365,14 +409,16 @@ export const getBusinessCategories = async (req: Request, res: Response) => {
       );
     }
 
+    // Only fetch active categories
     const categories = await Category.find({
       businessId: businessId,
       isActive: true,
       isDeleted: false
     }).sort({ name: 1 });
     
-    // Add global categories from business profile
-    const globalCategories = business.selectedCategories || [];
+    // Only include active global categories
+    const globalCategories = business.selectedCategories?.filter(gc => gc.isActive) || [];
+    
     const formattedGlobalCategories = globalCategories.map(gc => ({
       _id: gc.categoryId,
       name: gc.name,

@@ -1,7 +1,7 @@
 
 import { cancelAppointment, createAppointment, getAppointmentById, getAppointmentsByDate, getTeamMemberAppointments, updateAppointment } from 'controllers/users/userAppointmentController';
 import { createBusinessProfile, getAllBusinessProfiles, getBusinessProfileById, updateBusinessProfile } from 'controllers/users/userBusinessController';
-import { createCategory, deleteCategory, getAllCategories, getBusinessCategories, getCategoryById, updateCategory } from 'controllers/users/userCategoryController';
+import { createCategory, deleteCategories, getAllCategories, getBusinessCategories, getCategoryById, updateCategory } from 'controllers/users/userCategoryController';
 import { createClient, deleteClients, getAllClients, getClientById, updateClientById } from 'controllers/users/userClientController';
 import { createPackage, getAllPackages, getPackageById } from 'controllers/users/userPackageController';
 import { deactivateUserAccount, getUserProfile, updateUserPassword, updateUserProfile } from 'controllers/users/userProfileController';
@@ -48,7 +48,8 @@ router.get('/categories', getAllCategories);
 router.route('/category/:categoryId')
   .get(getCategoryById)
   .put(updateCategory)
-  .delete(deleteCategory);
+
+  router.delete('/categories', deleteCategories);
 
 // Service Routes
 router.post('/service', createService);

@@ -99,19 +99,36 @@ export const getBusinessCategoriesWithServices = async (req: Request, res: Respo
       );
     }
     
-    // Get regular categories
+    // Get regular categories - only active ones
     const categories = await Category.find({ 
       businessId: businessId,
       isActive: true,
       isDeleted: false 
     }).sort({ name: 1 });
     
-    // Get global categories from business profile
-    const globalCategories = business.selectedCategories || [];
+    // Get global categories from business profile - only active ones
+    const globalCategories = business.selectedCategories?.filter(gc => gc.isActive) || [];
+    
+    // Get global category IDs
+    const globalCategoryIds = globalCategories.map(gc => gc.categoryId);
+    
+    // Fetch global category details including descriptions
+    const globalCategoryDetails = await mongoose.model("GlobalCategory").find({
+      _id: { $in: globalCategoryIds },
+      isActive: true,
+      isDeleted: false
+    });
+    
+    // Create a map for quick lookup
+    const globalCategoryMap = new Map();
+    globalCategoryDetails.forEach(gc => {
+      globalCategoryMap.set(gc._id.toString(), gc);
+    });
     
     // Process regular categories with their services
     const regularCategoriesWithServices = await Promise.all(
       categories.map(async (category) => {
+        // Only get active services
         const services = await Service.find({
           categoryId: category._id,
           businessId: businessId,
@@ -124,7 +141,7 @@ export const getBusinessCategoriesWithServices = async (req: Request, res: Respo
           name: category.name,
           description: category.description || "",
           isGlobal: false,
-          services: services
+          services: services // This might be an empty array, which is fine
         };
       })
     );
@@ -132,27 +149,32 @@ export const getBusinessCategoriesWithServices = async (req: Request, res: Respo
     // Process global categories with their services
     const globalCategoriesWithServices = await Promise.all(
       globalCategories.map(async (globalCat) => {
+        // Only get active services
         const services = await Service.find({
           categoryId: globalCat.categoryId,
           businessId: businessId,
           isActive: true,
           isDeleted: false
         }).sort({ name: 1 });
+        
+        // Get global category details
+        const globalCatDetails = globalCategoryMap.get(globalCat.categoryId.toString());
 
         return {
           _id: globalCat.categoryId,
           name: globalCat.name,
-          description: "",
+          description: globalCatDetails?.description || "",
+          icon: globalCatDetails?.icon || "",
           isGlobal: true,
-          services: services
+          services: services // This might be an empty array, which is fine
         };
       })
     );
     
-    // Combine regular and global categories, filtering out global categories with no services
+    // Include all categories, even those with no services
     const allCategoriesWithServices = [
       ...regularCategoriesWithServices,
-      ...globalCategoriesWithServices.filter(cat => cat.services.length > 0)
+      ...globalCategoriesWithServices
     ];
     
     return successResponse(
@@ -271,4 +293,7 @@ export const getBusinessCategoryServices = async (req: Request, res: Response) =
     );
   }
 };
+
+
+
 
