@@ -58,7 +58,6 @@ export const createService = async (req: Request, res: Response) => {
       );
     }
 
-    // Check if this is a global category
     const businessProfile = await UserBusinessProfile.findOne({
       _id: businessId,
       "selectedCategories.categoryId": categoryId,
@@ -69,14 +68,12 @@ export const createService = async (req: Request, res: Response) => {
     let categoryName = "";
     
     if (businessProfile && businessProfile.selectedCategories.some(cat => cat.categoryId.toString() === categoryId)) {
-      // This is a global category
       isGlobalCategory = true;
       const globalCategory = businessProfile.selectedCategories.find(
         cat => cat.categoryId.toString() === categoryId
       );
       categoryName = globalCategory ? globalCategory.name : "";
     } else {
-      // This is a regular category, validate access
       const category = await validateCategoryAccess(categoryId, businessId, res, session);
       if (!category) return;
       categoryName = (category as any).name;
@@ -109,7 +106,7 @@ export const createService = async (req: Request, res: Response) => {
           teamMembers: processedTeamMembers || [],
           icon: icon || "",
           tags: processedTags,
-          isGlobalCategory: isGlobalCategory, // Set based on category type
+          isGlobalCategory: isGlobalCategory,
           isActive: true,
           isDeleted: false
         }
@@ -120,10 +117,65 @@ export const createService = async (req: Request, res: Response) => {
     await session.commitTransaction();
     session.endSession();
 
+    const service = newService[0];
+    const responseService = service.toObject();
+    
+    if (service.teamMembers && service.teamMembers.length > 0) {
+      const teamMemberIds = service.teamMembers.map(member => member.memberId);
+      
+      const teamMembersData = await TeamMember.find(
+        {
+          _id: { $in: teamMemberIds },
+          businessId: businessId,
+          isDeleted: false
+        },
+        {
+          name: 1,
+          email: 1,
+          phoneNumber: 1,
+          countryCode: 1,
+          countryCallingCode: 1,
+          profilePicture: 1,
+          gender: 1,
+          specialization: 1,
+          role: 1
+        }
+      );
+      
+      const teamMemberMap = new Map();
+      teamMembersData.forEach(member => {
+        teamMemberMap.set(member._id.toString(), member);
+      });
+      
+      const enhancedTeamMembers = service.teamMembers.map(member => {
+        const memberData = teamMemberMap.get(member.memberId.toString());
+        if (memberData) {
+          return {
+            _id: memberData._id.toString(),
+            name: memberData.name,
+            email: memberData.email,
+            phoneNumber: memberData.phoneNumber || "",
+            countryCode: memberData.countryCode || "",
+            countryCallingCode: memberData.countryCallingCode || "",
+            profilePicture: memberData.profilePicture || "",
+            gender: memberData.gender || "",
+            specialization: memberData.specialization || "",
+            role: memberData.role || "staff"
+          };
+        }
+        return {
+          _id: member.memberId.toString(),
+          name: member.name || ""
+        };
+      });
+      
+      (responseService as any).teamMembers = enhancedTeamMembers;
+    }
+
     return successResponse(
       res,
       "Service created successfully",
-      { service: newService[0] },
+      { service: responseService },
       httpStatusCode.CREATED
     );
   } catch (error: any) {
@@ -508,29 +560,29 @@ export const getCategoriesWithServices = async (req: Request, res: Response) => 
       
       if (enhancedService.teamMembers && enhancedService.teamMembers.length > 0) {
         interface EnhancedTeamMember {
-          memberId: string;
+          _id: string;
           name: string;
-          email: string;
-          phoneNumber: string;
-          countryCode: string;
-          countryCallingCode: string;
-          profilePicture: string;
-          gender: string;
-          specialization: string;
-          role: string;
+          email?: string;
+          phoneNumber?: string;
+          countryCode?: string;
+          countryCallingCode?: string;
+          profilePicture?: string;
+          gender?: string;
+          specialization?: string;
+          role?: string;
         }
 
-        interface TeamMemberRef {
-          memberId: string;
-          [key: string]: any;
+        interface OriginalTeamMember {
+          memberId: mongoose.Types.ObjectId | string;
+          name?: string;
         }
 
-        enhancedService.teamMembers = (enhancedService.teamMembers as TeamMemberRef[]).map((member: TeamMemberRef): EnhancedTeamMember | TeamMemberRef => {
+        enhancedService.teamMembers = (enhancedService.teamMembers as OriginalTeamMember[]).map((member: OriginalTeamMember): EnhancedTeamMember => {
           const memberData = teamMemberMap.get(member.memberId.toString());
           if (memberData) {
-            // Return only essential team member details
+            // Return only essential team member details with _id instead of memberId
             return {
-              memberId: memberData._id.toString(),
+              _id: memberData._id.toString(),
               name: memberData.name,
               email: memberData.email,
               phoneNumber: memberData.phoneNumber || "",
@@ -542,7 +594,11 @@ export const getCategoriesWithServices = async (req: Request, res: Response) => 
               role: memberData.role || "staff"
             };
           }
-          return member; // Fallback to original data if member not found
+          // If member not found, return original with _id instead of memberId
+          return {
+            _id: member.memberId.toString(),
+            name: member.name || ""
+          };
         });
       }
       

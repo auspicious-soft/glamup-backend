@@ -11,7 +11,7 @@ export interface IService {
   categoryName: string;
   description: string;
   duration: number; // in minutes
-  priceType: "fixed" | "starting_from" | "range";
+  priceType: "Fixed Price" | "Hourly Rate" | "range" | "";
   price: number;
   maxPrice?: number; // for range price type
   currency: string;
@@ -56,7 +56,7 @@ const serviceSchema = new mongoose.Schema(
     },
     priceType: {
       type: String,
-      enum: ["fixed", "starting_from", "range"],
+      enum: ["Fixed Price", "Hourly Rate", "range",""],
       default: "fixed",
     },
     price: {

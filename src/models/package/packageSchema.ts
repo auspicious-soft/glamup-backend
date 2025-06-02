@@ -14,7 +14,7 @@ export interface IPackage {
   description: string;
   services: PackageService[];
   duration: number; // total duration in minutes (manually entered by user)
-  priceType: "fixed" | "starting_from" | "range";
+  priceType: "Fixed Price" | "Hourly Rate" | "range" | "";
   price: number; // manually entered by user
   maxPrice?: number; // for range price type
   discountPercentage: number;
@@ -76,7 +76,7 @@ const packageSchema = new mongoose.Schema(
     },
     priceType: {
       type: String,
-      enum: ["fixed", "starting_from", "range"],
+      enum: ["Fixed Price", "Hourly Rate", "range",""],
       default: "fixed",
     },
     price: {
