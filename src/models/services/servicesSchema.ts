@@ -11,7 +11,7 @@ export interface IService {
   categoryName: string;
   description: string;
   duration: number; // in minutes
-  priceType: "Fixed Price" | "Hourly Rate" | "range" | "";
+  priceType: "Fixed price" | "Hourly rate" | "range" | "";
   price: number;
   maxPrice?: number; // for range price type
   currency: string;
