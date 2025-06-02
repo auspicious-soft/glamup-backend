@@ -2,11 +2,11 @@
 import { cancelAppointment, createAppointment, getAppointmentById, getAppointmentsByDate, getTeamMemberAppointments, updateAppointment } from 'controllers/users/userAppointmentController';
 import { createBusinessProfile, getAllBusinessProfiles, getBusinessProfileById, updateBusinessProfile } from 'controllers/users/userBusinessController';
 import { createCategory, deleteCategory, getAllCategories, getBusinessCategories, getCategoryById, updateCategory } from 'controllers/users/userCategoryController';
-import { createClient, deleteClientById, getAllClients, getClientById, updateClientById } from 'controllers/users/userClientController';
+import { createClient, deleteClients, getAllClients, getClientById, updateClientById } from 'controllers/users/userClientController';
 import { createPackage, getAllPackages, getPackageById } from 'controllers/users/userPackageController';
 import { deactivateUserAccount, getUserProfile, updateUserPassword, updateUserProfile } from 'controllers/users/userProfileController';
 import { addServiceToGlobalCategory, createService, deleteService,  getAllServices, getCategoriesWithServices, getServiceById, updateService } from 'controllers/users/userServicesController';
-import { createTeamMember, deleteTeamMember, getAllTeamMembers, getTeamMemberById, updateTeamMember } from 'controllers/users/userTeamMemberController';
+import { createTeamMember,  deleteTeamMembers,  getAllTeamMembers, getTeamMemberById, updateTeamMember } from 'controllers/users/userTeamMemberController';
 
 import { Router } from 'express';
 
@@ -31,16 +31,16 @@ router.post('/team-member', createTeamMember);
 router.get('/team-members', getAllTeamMembers);
 router.route('/team-member/:memberId')
   .get(getTeamMemberById)
-  .put(updateTeamMember)
-  .delete(deleteTeamMember);
+  .put(updateTeamMember);
+router.route('/team-members/delete').delete(deleteTeamMembers);
 
 // Client Routes
 router.post('/client', createClient);
 router.get('/clients', getAllClients);
 router.route('/client/:clientId')
   .get(getClientById)
-  .put(updateClientById)
-  .delete(deleteClientById);
+  .put(updateClientById);
+router.route("/clients/delete").delete(deleteClients);
 
 // Category Routes
 router.post('/category', createCategory);

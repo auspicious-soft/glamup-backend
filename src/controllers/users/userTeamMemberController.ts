@@ -28,14 +28,14 @@ export const createTeamMember = async (req: Request, res: Response) => {
     const userId = await validateUserAuth(req, res, session);
     if (!userId) return;
 
-    const { name, email, phoneNumber, countryCode, gender, birthday, countryCallingCode } =
+    const { name, email, phoneNumber, countryCode, gender, birthday, countryCallingCode, profilePicture } =
       req.body;
     
-    if (!name || !email || !countryCallingCode) {
+    if (!name || !email || !countryCallingCode || !profilePicture) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
-        "Name, email and countryCallingCode are required",
+        "Name, email, Profile Picture and countryCallingCode are required",
         httpStatusCode.BAD_REQUEST,
         res
       );
@@ -76,6 +76,7 @@ export const createTeamMember = async (req: Request, res: Response) => {
           birthday,
           businessId: businessId,
           userId: userId,
+          profilePicture,
         },
       ],
       { session }
@@ -313,48 +314,93 @@ export const updateTeamMember = async (req: Request, res: Response) => {
   }
 };
 
-export const deleteTeamMember = async (req: Request, res: Response) => {
+export const deleteTeamMembers = async (req: Request, res: Response) => {
   const session = await startSession();
 
   try {
     const userId = await validateUserAuth(req, res, session);
     if (!userId) return;
 
-    const { memberId } = req.params;
+    const { teamIds } = req.body;
 
-    if (!(await validateObjectId(memberId, "Team member", res, session)))
-      return;
-
-    const business = await findUserBusiness(userId, session);
-    const businessId = business ? business._id : null;
-
-    const query = buildTeamMemberQuery(
-      memberId,
-      userId,
-      businessId as mongoose.Types.ObjectId | null
-    );
-    const existingTeamMember = await TeamMember.findOne(query).session(session);
-
-    if (!existingTeamMember) {
+    if (!teamIds || !Array.isArray(teamIds) || teamIds.length === 0) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
-        "Team member not found or you don't have permission to delete it",
-        httpStatusCode.NOT_FOUND,
+        "Please provide an array of team member IDs",
+        httpStatusCode.BAD_REQUEST,
         res
       );
     }
 
-    await TeamMember.findByIdAndUpdate(
-      memberId,
-      { $set: { isDeleted: true } },
-      { session }
-    );
+    const business = await findUserBusiness(userId, session);
+    const businessId = business ? business._id : null;
+
+    // First validate all IDs before making any changes
+    for (const memberId of teamIds) {
+      // Validate object ID
+      if (!mongoose.Types.ObjectId.isValid(memberId)) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          `Invalid team member ID format: ${memberId}`,
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
+
+      // Build query to find the team member
+      const query = buildTeamMemberQuery(
+        memberId,
+        userId,
+        businessId as mongoose.Types.ObjectId | null
+      );
+      
+      const existingTeamMember = await TeamMember.findOne(query).session(session);
+
+      if (!existingTeamMember) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          `Team member not found or you don't have permission to delete it: ${memberId}`,
+          httpStatusCode.NOT_FOUND,
+          res
+        );
+      }
+    }
+
+    // If we get here, all IDs are valid, so proceed with deletion
+    const teamMembers = [];
+    
+    for (const memberId of teamIds) {
+      // Find the team member to get its name for the response
+      const query = buildTeamMemberQuery(
+        memberId,
+        userId,
+        businessId as mongoose.Types.ObjectId | null
+      );
+      
+      const teamMember = await TeamMember.findOne(query).session(session);
+      
+      // Mark the team member as deleted
+      await TeamMember.findByIdAndUpdate(
+        memberId,
+        { $set: { isDeleted: true } },
+        { session }
+      );
+      
+      teamMembers.push({
+        id: memberId,
+        name: teamMember?.name || 'Unknown'
+      });
+    }
 
     await session.commitTransaction();
     session.endSession();
 
-    return successResponse(res, "Team member deleted successfully");
+    return successResponse(res, "Team members deleted successfully", {
+      deletedTeamMembers: teamMembers
+    });
   } catch (error: any) {
     return handleTransactionError(session, error, res);
   }

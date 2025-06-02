@@ -262,32 +262,70 @@ export const updateClientById = async (req: Request, res: Response) => {
   }
 };
 
-export const deleteClientById = async (req: Request, res: Response) => {
+export const deleteClients = async (req: Request, res: Response) => {
   const session = await startSession();
 
   try {
     const userId = await validateUserAuth(req, res, session);
     if (!userId) return;
 
-    const { clientId } = req.params;
-    if (!(await validateObjectId(clientId, "Client", res, session))) return;
+    const { clientIds } = req.body;
+
+    if (!clientIds || !Array.isArray(clientIds) || clientIds.length === 0) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Please provide an array of client IDs",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
 
     const businessId = await validateBusinessForClient(userId, res, session);
     if (!businessId) return;
 
-    const existingClient = await validateClientAccess(clientId, businessId, res, session);
-    if (!existingClient) return;
+    // First validate all IDs before making any changes
+    for (const clientId of clientIds) {
+      // Validate object ID
+      if (!(await validateObjectId(clientId, "Client", res, session))) {
+        return; // validateObjectId already handles the error response
+      }
 
-    await Client.findByIdAndUpdate(
-      clientId,
-      { $set: { isDeleted: true } },
-      { session }
-    );
+      // Check if client exists and belongs to the business
+      const existingClient = await validateClientAccess(clientId, businessId, res, session);
+      if (!existingClient) return; // validateClientAccess already handles the error response
+    }
+
+    // If we get here, all IDs are valid, so proceed with deletion
+    const clients = [];
+    
+    for (const clientId of clientIds) {
+      // Find the client to get its name for the response
+      const client = await Client.findOne({
+        _id: clientId,
+        businessId: businessId,
+        isDeleted: false
+      }).session(session);
+      
+      // Mark the client as deleted
+      await Client.findByIdAndUpdate(
+        clientId,
+        { $set: { isDeleted: true } },
+        { session }
+      );
+      
+      clients.push({
+        id: clientId,
+        name: client?.name || 'Unknown'
+      });
+    }
 
     await session.commitTransaction();
     session.endSession();
 
-    return successResponse(res, "Client deleted successfully");
+    return successResponse(res, "Clients deleted successfully", {
+      deletedClients: clients
+    });
   } catch (error: any) {
     return handleTransactionError(session, error, res);
   }

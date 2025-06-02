@@ -88,10 +88,15 @@ export const userSignUp = async (req: Request, res: Response) => {
 
 export const UserLogin = async (req: Request, res: Response) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, fcmToken } = req.body;
     if (!email) {
       return errorResponseHandler("Email is required", httpStatusCode.BAD_REQUEST, res);
     }
+    
+    if (!fcmToken) {
+      return errorResponseHandler("FCM token is required", httpStatusCode.BAD_REQUEST, res);
+    }
+    
     const user = await findUserByEmailOrPhone(email);
     if (!user) {
       return errorResponseHandler("User not found", httpStatusCode.BAD_REQUEST, res);
@@ -105,6 +110,20 @@ export const UserLogin = async (req: Request, res: Response) => {
     if (!isPasswordValid) {
       return errorResponseHandler("Invalid password", httpStatusCode.BAD_REQUEST, res);
     }
+    
+    // Check if the FCM token already exists in the user's tokens array
+    if (user.fcmToken && user.fcmToken.includes(fcmToken)) {
+      return errorResponseHandler(
+        "User is already logged in on this device",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+    
+    // Add the new FCM token to the user's tokens array
+    await User.findByIdAndUpdate(user._id, {
+      $push: { fcmToken: fcmToken }
+    });
     
     const token = generateJwtToken(user._id.toString());
 
@@ -348,4 +367,65 @@ export const updatePassword = async (req: Request, res: Response) => {
   }
 };
 
+export const userLogout = async (req: Request, res: Response) => {
+  try {
+    const { fcmToken } = req.body;
+    
+    if (!fcmToken) {
+      return errorResponseHandler(
+        "FCM token is required",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    // Get user from auth middleware
+    let userId: string | undefined;
+    if (typeof req.user === 'string') {
+      userId = req.user;
+    } else if (req.user && typeof req.user === 'object' && 'id' in req.user) {
+      userId = (req.user as any).id;
+    }
+    if (!userId) {
+      return errorResponseHandler(
+        "User authentication failed",
+        httpStatusCode.UNAUTHORIZED,
+        res
+      );
+    }
+
+    // Find the user
+    const user = await User.findById(userId);
+    if (!user) {
+      return errorResponseHandler("User not found", httpStatusCode.NOT_FOUND, res);
+    }
+
+    // Check if the FCM token exists in the user's tokens array
+    if (!user.fcmToken || !user.fcmToken.includes(fcmToken)) {
+      return errorResponseHandler(
+        "Invalid FCM token for this user",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    // Remove the FCM token from the array
+    await User.findByIdAndUpdate(userId, {
+      $pull: { fcmToken: fcmToken }
+    });
+
+    return successResponse(
+      res,
+      "User logged out successfully",
+      { success: true }
+    );
+  } catch (error: any) {
+    console.error("Logout error:", error);
+    const parsedError = errorParser(error);
+    return res.status(parsedError.code).json({
+      success: false,
+      message: parsedError.message,
+    });
+  }
+};
 
