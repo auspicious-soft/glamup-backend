@@ -24,6 +24,7 @@ import {
 } from "../../utils/user/categoryServiceUtils";
 import UserBusinessProfile from "models/business/userBusinessProfileSchema";
 import mongoose from "mongoose";
+import TeamMember from "models/team/teamMemberSchema";
 // import UserBusinessProfile from "../../models/userBusinessProfile/userBusinessProfileSchema";
 // import { validateObjectId } from "../../utils/user/userUtils";
 
@@ -232,7 +233,62 @@ export const getServiceById = async (req: Request, res: Response) => {
       );
     }
 
-    return successResponse(res, "Service fetched successfully", { service });
+    // Enhance service with team member details if it has team members
+    let enhancedService = service.toObject();
+    
+    if (service.teamMembers && service.teamMembers.length > 0) {
+      // Get team member IDs
+      const teamMemberIds = service.teamMembers.map(member => member.memberId);
+      
+      // Fetch team member details
+      const teamMembers = await TeamMember.find(
+        {
+          _id: { $in: teamMemberIds },
+          businessId: businessId,
+          isDeleted: false
+        },
+        {
+          name: 1,
+          email: 1,
+          phoneNumber: 1,
+          countryCode: 1,
+          countryCallingCode: 1,
+          profilePicture: 1,
+          gender: 1,
+          specialization: 1,
+          role: 1
+        }
+      );
+      
+      // Create a map for quick lookup
+      const teamMemberMap = new Map();
+      teamMembers.forEach(member => {
+        teamMemberMap.set(member._id.toString(), member);
+      });
+      
+      // Enhance team members in the service
+      enhancedService.teamMembers = enhancedService.teamMembers.map(member => {
+        const memberData = teamMemberMap.get(member.memberId.toString());
+        if (memberData) {
+          // Return only essential team member details
+          return {
+            memberId: memberData._id,
+            name: memberData.name,
+            email: memberData.email,
+            phoneNumber: memberData.phoneNumber || "",
+            countryCode: memberData.countryCode || "",
+            countryCallingCode: memberData.countryCallingCode || "",
+            profilePicture: memberData.profilePicture || "",
+            gender: memberData.gender || "",
+            specialization: memberData.specialization || "",
+            role: memberData.role || "staff"
+          };
+        }
+        return member; // Fallback to original data if member not found
+      });
+    }
+
+    return successResponse(res, "Service fetched successfully", { service: enhancedService });
   } catch (error: any) {
     console.error("Error fetching service:", error);
     const parsedError = errorParser(error);
@@ -421,6 +477,78 @@ export const getCategoriesWithServices = async (req: Request, res: Response) => 
       globalCategoryMap.set(gc._id.toString(), gc);
     });
     
+    // Get all team members for this business with only the needed fields
+    const allTeamMembers = await TeamMember.find(
+      {
+        businessId: businessId,
+        isDeleted: false
+      },
+      {
+        name: 1,
+        email: 1,
+        phoneNumber: 1,
+        countryCode: 1,
+        countryCallingCode: 1,
+        profilePicture: 1,
+        gender: 1,
+        specialization: 1,
+        role: 1
+      }
+    );
+    
+    // Create a map for quick team member lookup
+    const teamMemberMap = new Map();
+    allTeamMembers.forEach(member => {
+      teamMemberMap.set(member._id.toString(), member);
+    });
+    
+    // Function to enhance service with essential team member data
+    const enhanceServiceWithTeamMembers = (service : any) => {
+      const enhancedService = service.toObject ? service.toObject() : {...service};
+      
+      if (enhancedService.teamMembers && enhancedService.teamMembers.length > 0) {
+        interface EnhancedTeamMember {
+          memberId: string;
+          name: string;
+          email: string;
+          phoneNumber: string;
+          countryCode: string;
+          countryCallingCode: string;
+          profilePicture: string;
+          gender: string;
+          specialization: string;
+          role: string;
+        }
+
+        interface TeamMemberRef {
+          memberId: string;
+          [key: string]: any;
+        }
+
+        enhancedService.teamMembers = (enhancedService.teamMembers as TeamMemberRef[]).map((member: TeamMemberRef): EnhancedTeamMember | TeamMemberRef => {
+          const memberData = teamMemberMap.get(member.memberId.toString());
+          if (memberData) {
+            // Return only essential team member details
+            return {
+              memberId: memberData._id.toString(),
+              name: memberData.name,
+              email: memberData.email,
+              phoneNumber: memberData.phoneNumber || "",
+              countryCode: memberData.countryCode || "",
+              countryCallingCode: memberData.countryCallingCode || "",
+              profilePicture: memberData.profilePicture || "",
+              gender: memberData.gender || "",
+              specialization: memberData.specialization || "",
+              role: memberData.role || "staff"
+            };
+          }
+          return member; // Fallback to original data if member not found
+        });
+      }
+      
+      return enhancedService;
+    };
+    
     // Process regular categories with their services
     const regularCategoriesWithServices = await Promise.all(
       categories.map(async (category) => {
@@ -431,13 +559,16 @@ export const getCategoriesWithServices = async (req: Request, res: Response) => 
           isActive: true,
           isDeleted: false
         }).sort({ name: 1 });
+        
+        // Enhance services with essential team member data
+        const enhancedServices = services.map(enhanceServiceWithTeamMembers);
 
         return {
           _id: category._id,
           name: category.name,
           description: category.description,
           isGlobal: false,
-          services: services // This might be an empty array, which is fine
+          services: enhancedServices
         };
       })
     );
@@ -452,6 +583,9 @@ export const getCategoriesWithServices = async (req: Request, res: Response) => 
           isDeleted: false
         }).sort({ name: 1 });
         
+        // Enhance services with essential team member data
+        const enhancedServices = services.map(enhanceServiceWithTeamMembers);
+        
         // Get global category details
         const globalCatDetails = globalCategoryMap.get(globalCat.categoryId.toString());
 
@@ -461,7 +595,7 @@ export const getCategoriesWithServices = async (req: Request, res: Response) => 
           description: globalCatDetails?.description || "",
           icon: globalCatDetails?.icon || "",
           isGlobal: true,
-          services: services // This might be an empty array, which is fine
+          services: enhancedServices
         };
       })
     );
