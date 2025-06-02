@@ -76,8 +76,8 @@ const packageSchema = new mongoose.Schema(
     },
     priceType: {
       type: String,
-      enum: ["Fixed Price", "Hourly Rate", "range",""],
-      default: "Fixed Price",
+      enum: ["Fixed price", "Hourly rate", "range",""],
+      default: "Fixed price",
     },
     price: {
       type: Number,
