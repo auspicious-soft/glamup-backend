@@ -21,6 +21,7 @@ import {
   validatePackageAccess,
   validatePackageServices
 } from "../../utils/user/categoryServiceUtils";
+import UserBusinessProfile from "../../models/business/userBusinessProfileSchema";
 
 // Define the type for services used in packages
 interface ServiceForPackage {
@@ -62,8 +63,40 @@ export const createPackage = async (req: Request, res: Response) => {
       );
     }
 
-    const category = await validateCategoryAccess(categoryId, businessId, res, session);
-    if (!category) return;
+    // Check if this is a global category
+    const businessProfile = await UserBusinessProfile.findOne({
+      _id: businessId,
+      "selectedCategories.categoryId": categoryId,
+      isDeleted: false
+    }).session(session);
+    
+    let isGlobalCategory = false;
+    let categoryName = "";
+    
+    if (businessProfile && businessProfile.selectedCategories.some(cat => cat.categoryId.toString() === categoryId)) {
+      // This is a global category that the business has selected
+      isGlobalCategory = true;
+      const globalCategory = businessProfile.selectedCategories.find(
+        cat => cat.categoryId.toString() === categoryId
+      );
+      
+      if (!globalCategory?.isActive) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          "This global category is inactive in your business profile",
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
+      
+      categoryName = globalCategory ? globalCategory.name : "";
+    } else {
+      // This is a regular category
+      const category = await validateCategoryAccess(categoryId, businessId, res, session);
+      if (!category) return;
+      categoryName = (category as any).name;
+    }
 
     if (!services || !Array.isArray(services) || services.length === 0) {
       await session.abortTransaction();
@@ -76,13 +109,15 @@ export const createPackage = async (req: Request, res: Response) => {
     }
 
     const serviceIds = services.map(service => service.serviceId);
+    
+    // Find services and check if they belong to the specified category and business
     const existingServices = await Service.find({
       _id: { $in: serviceIds },
       categoryId: categoryId,
       businessId: businessId,
       isDeleted: false
     }).session(session);
-
+    
     if (existingServices.length !== serviceIds.length) {
       await session.abortTransaction();
       session.endSession();
@@ -92,24 +127,48 @@ export const createPackage = async (req: Request, res: Response) => {
         res
       );
     }
-    const processedServices = services.map(service => {
-      const existingService = existingServices.find(
-        (s: any) => String(s._id) === service.serviceId
+    
+    // Check if all services are active
+    const inactiveServices = existingServices.filter((service: any) => !service.isActive);
+    if (inactiveServices.length > 0) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        `The following services are inactive: ${inactiveServices.map((s: any) => s.name).join(', ')}`,
+        httpStatusCode.BAD_REQUEST,
+        res
       );
-      return {
-        serviceId: service.serviceId,
-        name: existingService?.name || '',
-        duration: existingService?.duration || 0,
-        price: existingService?.price || 0
-      };
-    });
+    }
+    
+    // For global category, check if all services have isGlobalCategory set to true
+    if (isGlobalCategory) {
+      const nonGlobalServices = existingServices.filter((service: any) => !service.isGlobalCategory);
+      if (nonGlobalServices.length > 0) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          `The following services do not belong to the global category: ${nonGlobalServices.map((s: any) => s.name).join(', ')}`,
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
+    }
 
-    const totalServicesPrice = processedServices.reduce(
-      (sum, service) => sum + service.price, 
-      0
-    );
+    const processedServices = existingServices.map((service: any) => ({
+      serviceId: service._id,
+      name: service.name,
+      duration: service.duration,
+      price: service.price
+    }));
 
-    if (!['Fixed price', 'Hourly rate', 'range', ''].includes(priceType)) {
+    // Calculate total price based on services
+    const totalServicesPrice = processedServices.reduce((sum, service) => sum + service.price, 0);
+    
+    // Use provided price or calculate from services
+    const packagePrice = price !== undefined ? price : totalServicesPrice;
+    
+    // Validate price type
+    if (priceType && !['Fixed price', 'Hourly rate', 'range', ''].includes(priceType)) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
@@ -118,32 +177,24 @@ export const createPackage = async (req: Request, res: Response) => {
         res
       );
     }
-
-    if (price === undefined || price < 0) {
+    
+    // Validate max price for range price type
+    if (priceType === 'range' && (!maxPrice || maxPrice <= packagePrice)) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
-        "Package price is required and must be a non-negative number",
+        "For range price type, max price must be provided and greater than the min price",
         httpStatusCode.BAD_REQUEST,
         res
       );
     }
-
-    if (priceType === 'range' && (maxPrice === undefined || maxPrice <= price)) {
-      await session.abortTransaction();
-      session.endSession();
-      return errorResponseHandler(
-        "For range price type, max price is required and must be greater than the min price",
-        httpStatusCode.BAD_REQUEST,
-        res
-      );
-    }
-
-    let finalPrice = price;
+    
+    // Calculate discount and final price
+    let finalPrice = packagePrice;
     let calculatedDiscountAmount = 0;
     let calculatedDiscountPercentage = 0;
-
-    if (discountPercentage && discountPercentage > 0) {
+    
+    if (discountPercentage) {
       if (discountPercentage > 100) {
         await session.abortTransaction();
         session.endSession();
@@ -153,11 +204,12 @@ export const createPackage = async (req: Request, res: Response) => {
           res
         );
       }
+      
       calculatedDiscountPercentage = discountPercentage;
-      calculatedDiscountAmount = (price * discountPercentage) / 100;
-      finalPrice = price - calculatedDiscountAmount;
-    } else if (discountAmount && discountAmount > 0) {
-      if (discountAmount >= price) {
+      calculatedDiscountAmount = (packagePrice * discountPercentage) / 100;
+      finalPrice = packagePrice - calculatedDiscountAmount;
+    } else if (discountAmount) {
+      if (discountAmount >= packagePrice) {
         await session.abortTransaction();
         session.endSession();
         return errorResponseHandler(
@@ -166,9 +218,10 @@ export const createPackage = async (req: Request, res: Response) => {
           res
         );
       }
+      
       calculatedDiscountAmount = discountAmount;
-      calculatedDiscountPercentage = (discountAmount / price) * 100;
-      finalPrice = price - discountAmount;
+      calculatedDiscountPercentage = (discountAmount / packagePrice) * 100;
+      finalPrice = packagePrice - discountAmount;
     }
 
     const newPackage = await Package.create(
@@ -176,18 +229,19 @@ export const createPackage = async (req: Request, res: Response) => {
         {
           name: name.trim(),
           categoryId: categoryId,
-          categoryName: (category as any).name,
+          categoryName: categoryName,
           description: description || "",
           services: processedServices,
           duration: duration || processedServices.reduce((sum, service) => sum + service.duration, 0),
-          priceType: priceType,
-          price: price,
+          priceType: priceType || "Fixed price",
+          price: packagePrice,
           maxPrice: priceType === 'range' ? maxPrice : null,
           discountPercentage: calculatedDiscountPercentage,
           discountAmount: calculatedDiscountAmount,
           finalPrice: finalPrice,
           currency: currency || "INR",
           businessId: businessId,
+          isGlobalCategory: isGlobalCategory,
           isActive: true,
           isDeleted: false
         }
@@ -201,10 +255,7 @@ export const createPackage = async (req: Request, res: Response) => {
     return successResponse(
       res,
       "Package created successfully",
-      { 
-        package: newPackage[0],
-        totalServicesPrice: totalServicesPrice 
-      },
+      { package: newPackage[0] },
       httpStatusCode.CREATED
     );
   } catch (error: any) {
@@ -332,13 +383,60 @@ export const updatePackage = async (req: Request, res: Response) => {
       updateData.name = name.trim();
     }
     
+    // Check if the existing package is for a global category
+    const isExistingGlobalCategory = (existingPackage as any).isGlobalCategory;
+    
     // Update category if provided
-    if (categoryId) {
-      const category = await validateCategoryAccess(categoryId, businessId, res, session);
-      if (!category) return;
+    if (categoryId && categoryId !== (existingPackage as any).categoryId.toString()) {
+      // If the existing package is for a global category, don't allow changing to a different category
+      if (isExistingGlobalCategory) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          "Cannot change the category of a package linked to a global category",
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
+      
+      // Check if the new category is a global category
+      const businessProfile = await UserBusinessProfile.findOne({
+        _id: businessId,
+        "selectedCategories.categoryId": categoryId,
+        isDeleted: false
+      }).session(session);
+      
+      let isGlobalCategory = false;
+      let categoryName = "";
+      
+      if (businessProfile && businessProfile.selectedCategories.some(cat => cat.categoryId.toString() === categoryId)) {
+        // This is a global category that the business has selected
+        isGlobalCategory = true;
+        const globalCategory = businessProfile.selectedCategories.find(
+          cat => cat.categoryId.toString() === categoryId
+        );
+        
+        if (!globalCategory?.isActive) {
+          await session.abortTransaction();
+          session.endSession();
+          return errorResponseHandler(
+            "This global category is inactive in your business profile",
+            httpStatusCode.BAD_REQUEST,
+            res
+          );
+        }
+        
+        categoryName = globalCategory ? globalCategory.name : "";
+      } else {
+        // This is a regular category
+        const category = await validateCategoryAccess(categoryId, businessId, res, session);
+        if (!category) return;
+        categoryName = (category as any).name;
+      }
       
       updateData.categoryId = categoryId;
-      updateData.categoryName = (category as any).name;
+      updateData.categoryName = categoryName;
+      updateData.isGlobalCategory = isGlobalCategory;
     }
     
     // Update description if provided
@@ -348,10 +446,14 @@ export const updatePackage = async (req: Request, res: Response) => {
     
     // Update services if provided
     if (services && Array.isArray(services)) {
-      // Validate services belong to the right category and business
+      // Get the category ID to use for validation
       const categoryIdToUse = categoryId || (existingPackage as any).categoryId;
+      const isGlobalCategoryToUse = updateData.isGlobalCategory !== undefined ? 
+        updateData.isGlobalCategory : isExistingGlobalCategory;
       
       const serviceIds = services.map(service => service.serviceId);
+      
+      // Find services and check if they belong to the specified category and business
       const existingServices = await Service.find({
         _id: { $in: serviceIds },
         categoryId: categoryIdToUse,
@@ -369,17 +471,38 @@ export const updatePackage = async (req: Request, res: Response) => {
         );
       }
       
-      const processedServices = services.map(service => {
-        const existingService = existingServices.find(
-          (s: any) => String(s._id) === service.serviceId
+      // Check if all services are active
+      const inactiveServices = existingServices.filter((service: any) => !service.isActive);
+      if (inactiveServices.length > 0) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          `The following services are inactive: ${inactiveServices.map((s: any) => s.name).join(', ')}`,
+          httpStatusCode.BAD_REQUEST,
+          res
         );
-        return {
-          serviceId: service.serviceId,
-          name: existingService?.name || '',
-          duration: existingService?.duration || 0,
-          price: existingService?.price || 0
-        };
-      });
+      }
+      
+      // For global category, check if all services have isGlobalCategory set to true
+      if (isGlobalCategoryToUse) {
+        const nonGlobalServices = existingServices.filter((service: any) => !service.isGlobalCategory);
+        if (nonGlobalServices.length > 0) {
+          await session.abortTransaction();
+          session.endSession();
+          return errorResponseHandler(
+            `The following services do not belong to the global category: ${nonGlobalServices.map((s: any) => s.name).join(', ')}`,
+            httpStatusCode.BAD_REQUEST,
+            res
+          );
+        }
+      }
+      
+      const processedServices = existingServices.map((service: any) => ({
+        serviceId: service._id,
+        name: service.name,
+        duration: service.duration,
+        price: service.price
+      }));
       
       updateData.services = processedServices;
     }
@@ -421,12 +544,19 @@ export const updatePackage = async (req: Request, res: Response) => {
         );
       }
       updateData.price = price;
+    } else if (services && Array.isArray(services) && updateData.services) {
+      // Recalculate price based on services if not explicitly provided
+      const totalServicesPrice = (updateData.services as ServiceForPackage[]).reduce(
+        (sum: number, service: ServiceForPackage) => sum + service.price, 
+        0
+      );
+      updateData.price = totalServicesPrice;
     }
     
     // Update max price if provided
     if (maxPrice !== undefined) {
       const priceTypeToUse = priceType || (existingPackage as any).priceType;
-      const priceToUse = price !== undefined ? price : (existingPackage as any).price;
+      const priceToUse = updateData.price !== undefined ? updateData.price : (existingPackage as any).price;
       
       if (priceTypeToUse === 'range' && maxPrice <= priceToUse) {
         await session.abortTransaction();
@@ -452,7 +582,7 @@ export const updatePackage = async (req: Request, res: Response) => {
     }
     
     // Calculate discount and final price
-    let finalPrice = price !== undefined ? price : (existingPackage as any).price;
+    let finalPrice = updateData.price !== undefined ? updateData.price : (existingPackage as any).price;
     let calculatedDiscountAmount = 0;
     let calculatedDiscountPercentage = 0;
     
@@ -490,7 +620,7 @@ export const updatePackage = async (req: Request, res: Response) => {
       
       updateData.discountPercentage = calculatedDiscountPercentage;
       updateData.discountAmount = calculatedDiscountAmount;
-    } else if (price !== undefined) {
+    } else if (updateData.price !== undefined) {
       // If price changed but discount values weren't provided, recalculate based on existing percentage
       const existingDiscountPercentage = (existingPackage as any).discountPercentage || 0;
       
@@ -505,7 +635,7 @@ export const updatePackage = async (req: Request, res: Response) => {
     }
     
     // Update final price if any price-related fields changed
-    if (price !== undefined || discountPercentage !== undefined || discountAmount !== undefined) {
+    if (updateData.price !== undefined || discountPercentage !== undefined || discountAmount !== undefined) {
       updateData.finalPrice = finalPrice;
     }
     
