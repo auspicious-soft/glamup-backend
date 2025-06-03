@@ -122,7 +122,7 @@ export const createPackage = async (req: Request, res: Response) => {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
-        "One or more services do not exist, don't belong to the selected category, or don't belong to your business",
+        "One or more services don't belong to the selected category, or don't belong to your business",
         httpStatusCode.BAD_REQUEST,
         res
       );
