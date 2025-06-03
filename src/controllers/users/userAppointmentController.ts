@@ -27,6 +27,8 @@ import {
 import { validateUserAuth, startSession, handleTransactionError } from "../../utils/user/usercontrollerUtils";
 import ClientAppointment from "models/clientAppointment/clientAppointmentSchema";
 import Service from "models/services/servicesSchema";
+import Business from "models/business/userBusinessProfileSchema";
+import Category from "models/category/categorySchema";
 
 export const createAppointment = async (req: Request, res: Response) => {
   const session = await startSession();
@@ -63,19 +65,69 @@ export const createAppointment = async (req: Request, res: Response) => {
     const businessId = await validateBusinessProfile(userId, res, session);
     if (!businessId) return;
     
-    // Get the category from the first service
-    const service = await Service.findById(serviceIds[0]);
+    // Get the category from the first service - check both custom and global services
+    let service;
+    let categoryId;
+    
+    // First try to find the service in business-specific services
+    service = await Service.findById(serviceIds[0]);
+    
+    // If not found, check in global services
+    if (!service) {
+      // Find in global services from the business's selected categories
+      const business = await Business.findById(businessId);
+      if (!business) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          "Business not found",
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
+      
+      // Get the business's selected global categories
+      const selectedCategories = business.selectedCategories || [];
+      
+      // Find the global service within the selected categories
+      for (const catId of selectedCategories) {
+        const category = await Category.findById(catId).populate('services');
+        const categoryServices = category?.get('services');
+        if (category && categoryServices) {
+          const globalService = categoryServices.find(
+            (s: any) => s._id.toString() === serviceIds[0]
+          );
+          
+          if (globalService) {
+            service = globalService;
+            categoryId = catId;
+            break;
+          }
+        }
+      }
+    } else {
+      categoryId = service.categoryId;
+    }
+    
     if (!service) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
-        "Service not found",
+        "Service not found in either business services or global categories",
         httpStatusCode.BAD_REQUEST,
         res
       );
     }
     
-    const categoryId = service.categoryId;
+    if (!categoryId) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Could not determine category for the service",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
     
     // Check if the team member is available at the requested time
     const finalEndTime = endTime || await calculateEndTimeFromServices(startTime, serviceIds);
@@ -435,17 +487,66 @@ export const updateAppointment = async (req: Request, res: Response) => {
     // If services are being updated, get the category from the first service
     let categoryId;
     if (serviceIds && serviceIds.length > 0) {
-      const service = await Service.findById(serviceIds[0]);
+      // First try to find the service in business-specific services
+      let service = await Service.findById(serviceIds[0]);
+      
+      // If not found, check in global services
+      if (!service) {
+        // Find in global services from the business's selected categories
+        const business = await Business.findById(existingAppointment.businessId);
+        if (!business) {
+          await session.abortTransaction();
+          session.endSession();
+          return errorResponseHandler(
+            "Business not found",
+            httpStatusCode.BAD_REQUEST,
+            res
+          );
+        }
+        
+        // Get the business's selected global categories
+        const selectedCategories = business.selectedCategories || [];
+        
+        // Find the global service within the selected categories
+        for (const catId of selectedCategories) {
+          const category = await Category.findById(catId).populate('services');
+          const categoryServices = category?.get('services');
+          if (category && categoryServices) {
+            const globalService = categoryServices.find(
+              (s: any) => s._id.toString() === serviceIds[0]
+            );
+            
+            if (globalService) {
+              service = globalService;
+              categoryId = catId;
+              break;
+            }
+          }
+        }
+      } else {
+        categoryId = service.categoryId;
+      }
+      
       if (!service) {
         await session.abortTransaction();
         session.endSession();
         return errorResponseHandler(
-          "Service not found",
+          "Service not found in either business services or global categories",
           httpStatusCode.BAD_REQUEST,
           res
         );
       }
-      categoryId = service.categoryId;
+      
+      if (!categoryId) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          "Could not determine category for the service",
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
+      
       req.body.categoryId = categoryId; // Add categoryId to request body
     }
     
@@ -675,6 +776,7 @@ const calculateEndTimeFromServices = async (startTime: string, serviceIds: strin
   // Format as HH:MM
   return `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}`;
 };
+
 
 
 
