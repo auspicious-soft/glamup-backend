@@ -6,6 +6,7 @@ import Service, { IService } from "../../models/services/servicesSchema";
 import Category from "../../models/category/categorySchema";
 import Package from "../../models/package/packageSchema";
 import UserBusinessProfile from "../../models/business/userBusinessProfileSchema";
+import Business from "../../models/business/userBusinessProfileSchema";
 import { Response } from "express";
 import { errorResponseHandler } from "../../lib/errors/error-response-handler";
 import { httpStatusCode } from "../../lib/constant";
@@ -452,75 +453,156 @@ export const validateAppointmentEntities = async (
   endDate: Date,
   packageId?: string,
   businessId?: string
-) => {
+): Promise<any> => {
   try {
-    const client = await Client.findById(clientId);
-    if (!client || client.isDeleted) {
-      return { valid: false, message: "Client not found or inactive" };
-    }
-      const teamMember = await TeamMember.findById(teamMemberId);
-    if (!teamMember || !teamMember.isActive || teamMember.isDeleted) {
-      return { valid: false, message: "Team member not found or inactive" };
+    // Validate client
+    const client = await Client.findOne({
+      _id: clientId,
+      isDeleted: false
+    });
+    
+    if (!client) {
+      return { valid: false, message: "Client not found" };
     }
     
-    const category = await Category.findById(categoryId);
-    if (!category || !category.isActive || category.isDeleted) {
-      return { valid: false, message: "Category not found or inactive" };
+    // Validate team member
+    const teamMember = await TeamMember.findOne({
+      _id: teamMemberId,
+      isDeleted: false
+    });
+    
+    if (!teamMember) {
+      return { valid: false, message: "Team member not found" };
     }
     
-    if (new Date(startDate) > new Date(endDate)) {
-      return { valid: false, message: "Start date cannot be after end date" };
-    }
-    
-    if (businessId) {
-      if (client.businessId.toString() !== businessId) {
-        return { valid: false, message: "Client does not belong to this business" };
-      }
-      
-      if (teamMember.businessId && teamMember.businessId.toString() !== businessId) {
-        return { valid: false, message: "Team member does not belong to this business" };
-      }
-      
-      if (category.businessId.toString() !== businessId) {
-        return { valid: false, message: "Category does not belong to this business" };
-      }
-    }
-    
+    // Validate services and calculate total duration and price
     let services: IService[] = [];
     let totalDuration = 0;
     let totalPrice = 0;
     
     if (serviceIds && serviceIds.length > 0) {
+      // First try to find services in business-specific services
       services = await Service.find({
         _id: { $in: serviceIds },
-        isActive: true,
         isDeleted: false
       });
       
-      if (services.length !== serviceIds.length) {
-        return { valid: false, message: "One or more services not found or inactive" };
+      // Check if any services were not found in business services
+      const foundServiceIds = services.map(s => {
+        const id = (s as any)._id || (s as any).id || (s as any).serviceId;
+        return id ? id.toString() : '';
+      });
+      const missingServiceIds = serviceIds.filter(id => !foundServiceIds.includes(id));
+      
+      // If there are missing services, try to find them in global categories
+      if (missingServiceIds.length > 0 && businessId) {
+        const business = await Business.findById(businessId);
+        if (business) {
+          // Get the business's selected global categories
+          const selectedCategories = business.selectedCategories || [];
+          
+          // For each missing service, try to find it in global categories
+          for (const catId of selectedCategories) {
+            const category = await Category.findById(catId).populate('services');
+            const populatedServices = category?.get('services') as any[] | undefined;
+            if (category && populatedServices) {
+              for (const missingId of missingServiceIds) {
+                const globalService = populatedServices.find(
+                  (s: any) => s._id.toString() === missingId
+                );
+                
+                if (globalService) {
+                  services.push(globalService);
+                  // Remove this ID from missing IDs
+                  missingServiceIds.splice(missingServiceIds.indexOf(missingId), 1);
+                }
+              }
+            }
+          }
+        }
       }
       
+      // If we still have missing services, return error
+      if (services.length !== serviceIds.length) {
+        return { 
+          valid: false, 
+          message: "One or more services not found" 
+        };
+      }
+      
+      // Calculate total duration and price
       for (const service of services) {
-        totalDuration += service.duration;
-        totalPrice += service.price;
+        totalDuration += service.duration || 0;
+        totalPrice += service.price || 0;
       }
     }
     
-    let packageData = null;
-    if (packageId) {
-      packageData = await Package.findOne({
-        _id: packageId,
+    // For global category services, we don't need to validate the category
+    // since we've already validated the services
+    let category;
+    const isGlobalCategoryService = services.some(s => s.isGlobalCategory);
+    
+    if (!isGlobalCategoryService) {
+      // Only validate category for non-global services
+      category = await Category.findOne({
+        _id: categoryId,
         isActive: true,
         isDeleted: false
       });
       
-      if (!packageData) {
-        return { valid: false, message: "Package not found or inactive" };
+      if (!category) {
+        return { valid: false, message: "Category not found or inactive" };
+      }
+    } else {
+      // For global category services, get the category info from the business profile
+      if (businessId) {
+        const business = await Business.findById(businessId);
+        if (business) {
+          const globalCatInfo = business.selectedCategories.find(
+            (cat: any) => cat.categoryId.toString() === categoryId
+          );
+          
+          if (globalCatInfo) {
+            category = {
+              _id: globalCatInfo.categoryId,
+              name: globalCatInfo.name
+            };
+          }
+        }
       }
       
-      totalDuration = packageData.duration;
-      totalPrice = packageData.finalPrice;
+      if (!category) {
+        // Try to get the category directly from GlobalCategory model
+        const globalCategory = await mongoose.model("GlobalCategory").findOne({
+          _id: categoryId,
+          isActive: true,
+          isDeleted: false
+        });
+        
+        if (globalCategory) {
+          category = {
+            _id: globalCategory._id,
+            name: globalCategory.name
+          };
+        } else {
+          return { valid: false, message: "Global category not found or inactive" };
+        }
+      }
+    }
+    
+    // Validate package if provided
+    let packageData = null;
+    if (packageId) {
+      const packageItem = await Package.findOne({
+        _id: packageId,
+        isDeleted: false
+      });
+      
+      if (!packageItem) {
+        return { valid: false, message: "Package not found" };
+      }
+      
+      packageData = packageItem;
     }
     
     return {
@@ -653,4 +735,5 @@ export const preparePaginationMetadata = (
     currentPage: pagination.page
   };
 };
+
 
