@@ -3,7 +3,7 @@ import { cancelAppointment, createAppointment, getAppointmentById, getAppointmen
 import { createBusinessProfile, getAllBusinessProfiles, getBusinessProfileById, updateBusinessProfile } from 'controllers/users/userBusinessController';
 import { createCategory, deleteCategories, getAllCategories, getBusinessCategories, getCategoryById, updateCategory } from 'controllers/users/userCategoryController';
 import { createClient, deleteClients, getAllClients, getClientById, updateClientById } from 'controllers/users/userClientController';
-import { createPackage, getAllPackages, getPackageById } from 'controllers/users/userPackageController';
+import { createPackage, getAllPackages, getPackageById, updatePackage, deletePackage, deletePackages } from 'controllers/users/userPackageController';
 import { deactivateUserAccount, getUserProfile, updateUserPassword, updateUserProfile } from 'controllers/users/userProfileController';
 import { addServiceToGlobalCategory, createService, deleteService,  getAllServices, getCategoriesWithServices, getServiceById, updateService } from 'controllers/users/userServicesController';
 import { createTeamMember,  deleteTeamMembers,  getAllTeamMembers, getTeamMemberById, updateTeamMember } from 'controllers/users/userTeamMemberController';
@@ -64,6 +64,9 @@ router.get('/categories-with-services', getCategoriesWithServices);
 router.post('/package', createPackage);
 router.get('/packages', getAllPackages);
 router.get('/package/:packageId', getPackageById);
+router.put('/package/:packageId', updatePackage);
+router.delete('/package/:packageId', deletePackage);
+router.delete('/packages', deletePackages);
 
 
 // Appointment Routes
@@ -77,6 +80,7 @@ router.post('/appointment/:appointmentId/cancel', cancelAppointment);
 router.post('/global-category/:categoryId/service', addServiceToGlobalCategory);
 
 export default router;
+
 
 
 
