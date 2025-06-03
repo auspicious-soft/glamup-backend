@@ -26,7 +26,7 @@ import {
 } from "../../utils/appointment/appointmentUtils";
 import { validateUserAuth, startSession, handleTransactionError } from "../../utils/user/usercontrollerUtils";
 import ClientAppointment from "models/clientAppointment/clientAppointmentSchema";
-
+import Service from "models/services/servicesSchema";
 
 export const createAppointment = async (req: Request, res: Response) => {
   const session = await startSession();
@@ -43,19 +43,18 @@ export const createAppointment = async (req: Request, res: Response) => {
       startTime, 
       endTime,
       status, 
-      categoryId, 
       serviceIds,
       packageId,
       discount
     } = req.body;
     
     if (!validateRequiredAppointmentFields(
-      clientId, teamMemberId, startDate, startTime, categoryId
+      clientId, teamMemberId, startDate, startTime, serviceIds
     )) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
-        "Client, team member, date, time, and category are required",
+        "Client, team member, date, time, and services are required",
         httpStatusCode.BAD_REQUEST,
         res
       );
@@ -64,20 +63,39 @@ export const createAppointment = async (req: Request, res: Response) => {
     const businessId = await validateBusinessProfile(userId, res, session);
     if (!businessId) return;
     
+    // Get the category from the first service
+    const service = await Service.findById(serviceIds[0]);
+    if (!service) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Service not found",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+    
+    const categoryId = service.categoryId;
+    
+    // Check if the team member is available at the requested time
+    const finalEndTime = endTime || await calculateEndTimeFromServices(startTime, serviceIds);
+    
+    // Pass clientId to check for duplicate bookings by the same client
     const isAvailable = await isTimeSlotAvailable(
       teamMemberId,
       new Date(startDate),
       new Date(endDate || startDate),
       startTime,
-      endTime
+      finalEndTime,
+      clientId
     );
     
     if (!isAvailable) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
-        "Selected time slot is not available",
-        httpStatusCode.BAD_REQUEST,
+        "Selected time slot is not available. Either the team member already has an appointment at this time or this client already has a booking for this time slot.",
+        httpStatusCode.CONFLICT,
         res
       );
     }
@@ -85,7 +103,7 @@ export const createAppointment = async (req: Request, res: Response) => {
     const validationResult = await validateAppointmentEntities(
       clientId,
       teamMemberId,
-      categoryId,
+      categoryId.toString(), // Use the category from the service
       serviceIds || [],
       new Date(startDate),
       new Date(endDate || startDate),
@@ -412,7 +430,24 @@ export const updateAppointment = async (req: Request, res: Response) => {
     }
     
     // For business-created appointments, proceed with normal update flow
-    const { teamMemberId, status } = req.body;
+    const { teamMemberId, status, serviceIds } = req.body;
+    
+    // If services are being updated, get the category from the first service
+    let categoryId;
+    if (serviceIds && serviceIds.length > 0) {
+      const service = await Service.findById(serviceIds[0]);
+      if (!service) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          "Service not found",
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
+      categoryId = service.categoryId;
+      req.body.categoryId = categoryId; // Add categoryId to request body
+    }
     
     const teamMemberChanged = isTeamMemberChanged(teamMemberId, existingAppointment);
     
@@ -620,6 +655,29 @@ export const cancelAppointment = async (req: Request, res: Response) => {
     return handleTransactionError(session, error, res);
   }
 };
+
+// Helper function to calculate end time based on services duration
+const calculateEndTimeFromServices = async (startTime: string, serviceIds: string[]): Promise<string> => {
+  // Fetch all services to get their durations
+  const services = await Service.find({ _id: { $in: serviceIds } });
+  
+  // Calculate total duration in minutes
+  const totalDuration = services.reduce((total, service) => total + (service.duration || 0), 0);
+  
+  // Parse start time
+  const [hours, minutes] = startTime.split(':').map(Number);
+  let totalMinutes = hours * 60 + minutes + totalDuration;
+  
+  // Calculate end time
+  const endHours = Math.floor(totalMinutes / 60) % 24;
+  const endMinutes = totalMinutes % 60;
+  
+  // Format as HH:MM
+  return `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}`;
+};
+
+
+
 
 
 

@@ -325,8 +325,10 @@ export const checkForConflicts = async (
   endDate: Date,
   startTime: string,
   endTime: string,
+  clientId?: string,
   excludeAppointmentId?: string
 ) => {
+  // Base query for team member availability
   const query: any = {
     teamMemberId,
     $or: [
@@ -341,7 +343,7 @@ export const checkForConflicts = async (
         endDate: { $gte: endDate }
       }
     ],
-    status: { $in: ["pending", "confirmed"] },
+    status: { $in: ["PENDING", "CONFIRMED"] }, // Make sure status is uppercase to match schema
     isDeleted: false
   };
   
@@ -349,6 +351,7 @@ export const checkForConflicts = async (
     query._id = { $ne: excludeAppointmentId };
   }
   
+  // Check for any conflicting appointments for this team member
   const appointments = await Appointment.find(query);
   
   const convertToMinutes = (timeStr: string) => {
@@ -364,6 +367,7 @@ export const checkForConflicts = async (
     const appointmentEndDate = new Date(appointment.endDate);
     const checkDate = new Date(startDate);
     
+    // Check if dates overlap
     if (
       appointmentDate.getFullYear() === checkDate.getFullYear() &&
       appointmentDate.getMonth() === checkDate.getMonth() &&
@@ -372,21 +376,27 @@ export const checkForConflicts = async (
       const existingStartMinutes = convertToMinutes(appointment.startTime);
       const existingEndMinutes = convertToMinutes(appointment.endTime);
       
+      // Check if time slots overlap
       if (
         (newStartMinutes >= existingStartMinutes && newStartMinutes < existingEndMinutes) ||
         (newEndMinutes > existingStartMinutes && newEndMinutes <= existingEndMinutes) ||
         (newStartMinutes <= existingStartMinutes && newEndMinutes >= existingEndMinutes)
       ) {
+        // If clientId is provided, check if this is the same client trying to book the same slot
+        if (clientId && appointment.clientId.toString() === clientId.toString()) {
+          return {
+            hasConflict: true,
+            conflictingAppointment: appointment,
+            isSameClient: true
+          };
+        }
+        
         return {
           hasConflict: true,
-          conflictingAppointment: appointment
+          conflictingAppointment: appointment,
+          isSameClient: false
         };
       }
-    } else {
-      return {
-        hasConflict: true,
-        conflictingAppointment: appointment
-      };
     }
   }
   
@@ -400,6 +410,7 @@ export const isTimeSlotAvailable = async (
   endDate: Date,
   startTime: string,
   endTime: string,
+  clientId?: string,
   appointmentId?: string
 ) => {
   try {
@@ -409,6 +420,7 @@ export const isTimeSlotAvailable = async (
       endDate,
       startTime,
       endTime,
+      clientId,
       appointmentId
     );
     
@@ -641,3 +653,4 @@ export const preparePaginationMetadata = (
     currentPage: pagination.page
   };
 };
+
