@@ -67,13 +67,13 @@ export interface IClientAppointment {
   discount: number;
   finalPrice: number;
   currency: string;
-  paymentStatus: "pending" | "partial" | "paid" | "refunded";
+  paymentStatus: "PENDING" | "PARTIAL" | "PAID" | "REFUNDED";
   paymentMethod: "cash" | "card" | "online" | "other";
   paymentDate: Date | null;
   paymentId: string | null;
   
   // Appointment status
-  status: "pending" | "confirmed" | "cancelled" | "completed" | "no_show";
+  status: "PENDING" | "CONFIRMED" | "CANCELLED" | "COMPLETED" | "NO_SHOW";
   cancellationReason: string;
   cancellationDate: Date | null;
   cancellationBy: "client" | "business" | null;
@@ -264,8 +264,8 @@ const clientAppointmentSchema = new mongoose.Schema(
     },
     paymentStatus: {
       type: String,
-      enum: ["pending", "partial", "paid", "refunded"],
-      default: "pending",
+      enum: ["PENDING", "PARTIAL", "PAID", "REFUNDED"],
+      default: "PENDING",
     },
     paymentMethod: {
       type: String,
@@ -284,8 +284,8 @@ const clientAppointmentSchema = new mongoose.Schema(
     // Appointment status
     status: {
       type: String,
-      enum: ["pending", "confirmed", "cancelled", "completed", "no_show"],
-      default: "pending",
+      enum: ["PENDING", "CONFIRMED", "CANCELLED", "COMEPLETED", "NO_SHOW"],
+      default: "PENDING",
     },
     cancellationReason: {
       type: String,

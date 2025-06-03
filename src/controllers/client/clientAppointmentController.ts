@@ -199,7 +199,7 @@ export const createClientAppointment = async (req: Request, res: Response) => {
       discount: 0,
       finalPrice: totalPrice,
       
-      status: "pending",
+      status: "PENDING",
       notes: notes || "",
       
       location: {
@@ -241,8 +241,8 @@ export const createClientAppointment = async (req: Request, res: Response) => {
       finalPrice: totalPrice,
       currency: "INR",
       
-      paymentStatus: "pending",
-      status: "pending",
+      paymentStatus: "PENDING",
+      status: "PENDING",
       
       createdBy: business.ownerId, // Use business owner as creator
       updatedBy: business.ownerId,
@@ -452,7 +452,7 @@ export const cancelClientAppointment = async (req: Request, res: Response) => {
     const clientAppointment = await ClientAppointment.findOne({
       _id: appointmentId,
       isDeleted: false,
-      status: { $in: ["pending", "confirmed"] }
+      status: { $in: ["PENDING", "CONFIRMED"] }
     });
     
     if (!clientAppointment) {
@@ -466,7 +466,7 @@ export const cancelClientAppointment = async (req: Request, res: Response) => {
     }
     
     // Update client appointment
-    clientAppointment.status = "cancelled";
+    clientAppointment.status = "CANCELLED";
     clientAppointment.cancellationReason = cancellationReason || "Cancelled by client";
     clientAppointment.cancellationDate = new Date();
     clientAppointment.cancellationBy = "client";
@@ -480,7 +480,7 @@ export const cancelClientAppointment = async (req: Request, res: Response) => {
     });
     
     if (businessAppointment) {
-      businessAppointment.status = "cancelled";
+      businessAppointment.status = "CANCELLED";
       businessAppointment.cancellationReason = cancellationReason || "Cancelled by client";
       businessAppointment.cancellationDate = new Date();
       businessAppointment.cancellationBy = "client";
@@ -544,7 +544,7 @@ export const rescheduleClientAppointment = async (req: Request, res: Response) =
     const clientAppointment = await ClientAppointment.findOne({
       _id: appointmentId,
       isDeleted: false,
-      status: { $in: ["pending", "confirmed"] }
+      status: { $in: ["PENDING", "CONFIRMED"] }
     });
     
     if (!clientAppointment) {
@@ -630,7 +630,7 @@ export const rescheduleClientAppointment = async (req: Request, res: Response) =
       endTime: finalEndTime,
       parentAppointmentId: clientAppointment._id,
       isRescheduled: true,
-      status: "pending",
+      status: "PENDING",
       createdAt: undefined,
       updatedAt: undefined
     };
@@ -642,7 +642,7 @@ export const rescheduleClientAppointment = async (req: Request, res: Response) =
     }
     
     // Mark the old client appointment as cancelled due to reschedule
-    clientAppointment.status = "cancelled";
+    clientAppointment.status = "CANCELLED";
     clientAppointment.cancellationReason = "Rescheduled by client";
     clientAppointment.cancellationDate = new Date();
     clientAppointment.cancellationBy = "client";
@@ -661,7 +661,7 @@ export const rescheduleClientAppointment = async (req: Request, res: Response) =
     
     if (businessAppointment) {
       // Mark old business appointment as cancelled
-      businessAppointment.status = "cancelled";
+      businessAppointment.status = "CANCELLED";
       businessAppointment.cancellationReason = "Rescheduled by client";
       businessAppointment.cancellationDate = new Date();
       businessAppointment.cancellationBy = "client";
@@ -679,7 +679,7 @@ export const rescheduleClientAppointment = async (req: Request, res: Response) =
         startTime,
         endTime: finalEndTime,
         parentAppointmentId: businessAppointment._id,
-        status: "pending",
+        status: "PENDING",
         createdAt: undefined,
         updatedAt: undefined,
         createdVia: "client_booking"

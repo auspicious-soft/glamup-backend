@@ -322,13 +322,13 @@ export const updateAppointment = async (req: Request, res: Response) => {
       }
       
       // If cancelling, update both business and client appointment records
-      if (status === "cancelled") {
+      if (status === "CANCELLED") {
         // Update business appointment
         await Appointment.findByIdAndUpdate(
           appointmentId,
           {
             $set: {
-              status: "cancelled",
+              status: "CANCELLED",
               cancellationReason: cancellationReason || "Cancelled by business",
               cancellationDate: new Date(),
               cancellationBy: "business",
@@ -349,7 +349,7 @@ export const updateAppointment = async (req: Request, res: Response) => {
             clientAppointment._id,
             {
               $set: {
-                status: "cancelled",
+                status: "CANCELLED",
                 cancellationReason: cancellationReason || "Cancelled by business",
                 cancellationDate: new Date(),
                 cancellationBy: "business"
@@ -552,7 +552,7 @@ export const cancelAppointment = async (req: Request, res: Response) => {
     const existingAppointment = await validateAppointmentAccess(appointmentId, businessId, res, session);
     if (!existingAppointment) return;
     
-    if (existingAppointment.status === "cancelled") {
+    if (existingAppointment.status === "CANCELLED") {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
@@ -567,7 +567,7 @@ export const cancelAppointment = async (req: Request, res: Response) => {
       appointmentId,
       {
         $set: {
-          status: "cancelled",
+          status: "CANCELLED",
           cancellationReason: cancellationReason || "Cancelled by business",
           cancellationDate: new Date(),
           cancellationBy: "business",
@@ -593,7 +593,7 @@ export const cancelAppointment = async (req: Request, res: Response) => {
         clientAppointment._id,
         {
           $set: {
-            status: "cancelled",
+            status: "CANCELLED",
             cancellationReason: cancellationReason || "Cancelled by business",
             cancellationDate: new Date(),
             cancellationBy: "business"
