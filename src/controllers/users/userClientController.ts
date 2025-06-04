@@ -19,7 +19,75 @@ import {
   processClientUpdateData,
 } from "../../utils/user/usercontrollerUtils";
 import Client from "models/client/clientSchema";
+import { Readable } from "stream";
+import Busboy from "busboy";
+import { createS3Client, uploadStreamToS3 } from "../../config/s3";
+import { DeleteObjectCommand } from "@aws-sdk/client-s3";
+import mongoose from "mongoose";
 
+// Helper function to handle file upload to S3
+const uploadProfilePictureToS3 = async (req: Request, userEmail: string): Promise<string | null> => {
+  return new Promise((resolve, reject) => {
+    if (!req.headers["content-type"]?.includes("multipart/form-data")) {
+      resolve(null);
+      return;
+    }
+
+    const busboy = Busboy({ headers: req.headers });
+    let uploadPromise: Promise<string> | null = null;
+
+    busboy.on(
+      "file",
+      async (fieldname: string, fileStream: any, fileInfo: any) => {
+        if (fieldname !== "profilePicture") {
+          fileStream.resume(); // Skip this file
+          return;
+        }
+
+        const { filename, mimeType } = fileInfo;
+
+        const readableStream = new Readable();
+        readableStream._read = () => {}; // Required implementation
+
+        fileStream.on("data", (chunk: any) => {
+          readableStream.push(chunk);
+        });
+
+        fileStream.on("end", () => {
+          readableStream.push(null); // End of stream
+        });
+
+        uploadPromise = uploadStreamToS3(
+          readableStream,
+          filename,
+          mimeType,
+          userEmail
+        );
+      }
+    );
+
+    busboy.on("field", (fieldname, val) => {
+      // Store form fields in req.body
+      if (!req.body) req.body = {};
+      req.body[fieldname] = val;
+    });
+
+    busboy.on("finish", async () => {
+      try {
+        if (uploadPromise) {
+          const imageKey = await uploadPromise;
+          resolve(imageKey);
+        } else {
+          resolve(null);
+        }
+      } catch (error) {
+        reject(error);
+      }
+    });
+
+    req.pipe(busboy);
+  });
+};
 
 // Clients functions
 export const createClient = async (req: Request, res: Response) => {
@@ -32,13 +100,33 @@ export const createClient = async (req: Request, res: Response) => {
     const businessId = await validateBusinessForClient(userId, res, session);
     if (!businessId) return;
 
+    // Handle file upload if it's a multipart request
+    let profilePictureUrl = null;
+    if (req.headers["content-type"]?.includes("multipart/form-data")) {
+      try {
+        // Get business email for S3 folder structure
+        const business = await mongoose.model("UserBusinessProfile").findById(businessId);
+        const businessEmail = business?.email || userId.toString();
+        
+        profilePictureUrl = await uploadProfilePictureToS3(req, businessEmail);
+      } catch (uploadError) {
+        await session.abortTransaction();
+        session.endSession();
+        console.error("Error uploading profile picture:", uploadError);
+        return errorResponseHandler(
+          "Error uploading profile picture",
+          httpStatusCode.INTERNAL_SERVER_ERROR,
+          res
+        );
+      }
+    }
+
     const {
       name,
       email,
       phoneNumber,
       countryCode,
       countryCallingCode,
-      profilePicture,
       birthday,
       gender,
       address,
@@ -70,7 +158,7 @@ export const createClient = async (req: Request, res: Response) => {
           phoneNumber: phoneNumber || "",
           countryCode: countryCode || "+91",
           countryCallingCode: countryCallingCode || "IN",
-          profilePicture: profilePicture || "",
+          profilePicture: profilePictureUrl || "",
           birthday: birthday || null,
           gender: gender || "prefer_not_to_say",
           address: address || {

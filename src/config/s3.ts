@@ -1,6 +1,7 @@
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { configDotenv } from 'dotenv';
+import { Readable } from 'stream';
 configDotenv()
 
 const { AWS_ACCESS_KEY_ID, AWS_REGION, AWS_SECRET_ACCESS_KEY, AWS_BUCKET_NAME } = process.env;
@@ -31,19 +32,56 @@ export const generateSignedUrlToUploadOn = async (fileName: string, fileType: st
     }
 }
 
-export const deleteFileFromS3 = async (imageKey: string) => {
-    const params = {
-        Bucket: process.env.AWS_BUCKET_NAME,
-        Key: imageKey,
-    }
+// New function to upload a stream directly to S3
+export const uploadStreamToS3 = async (
+    fileStream: Readable,
+    fileName: string,
+    fileType: string,
+    userEmail: string
+): Promise<string> => {
     try {
-        const s3Client = await createS3Client()
-        const command = new DeleteObjectCommand(params)
-        const response = await s3Client.send(command)
-        return response
+        // Generate a unique key for the file
+        const timestamp = Date.now();
+        const key = `clients/${userEmail}/profile-pictures/${timestamp}-${fileName}`;
+        
+        // Convert stream to buffer for S3 upload
+        const chunks: any[] = [];
+        for await (const chunk of fileStream) {
+            chunks.push(chunk);
+        }
+        const buffer = Buffer.concat(chunks);
+        
+        // Upload to S3
+        const s3Client = createS3Client();
+        const uploadParams = {
+            Bucket: AWS_BUCKET_NAME,
+            Key: key,
+            Body: buffer,
+            ContentType: fileType,
+        };
+        
+        await s3Client.send(new PutObjectCommand(uploadParams));
+        
+        // Return the S3 object key
+        return key;
     } catch (error) {
-        console.error('Error deleting file from S3:', error)
-        throw error
+        console.error("Error uploading to S3:", error);
+        throw error;
     }
 }
 
+    export const deleteFileFromS3 = async (imageKey: string) => {
+        const params = {
+            Bucket: process.env.AWS_BUCKET_NAME,
+            Key: imageKey,
+        }
+        try {
+            const s3Client = await createS3Client()
+            const command = new DeleteObjectCommand(params)
+            const response = await s3Client.send(command)
+            return response
+        } catch (error) {   
+            console.error('Error deleting file from S3:', error)
+            throw error
+        }
+    }
