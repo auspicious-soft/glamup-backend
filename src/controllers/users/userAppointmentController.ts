@@ -239,8 +239,10 @@ export const getAppointmentsByDate = async (req: Request, res: Response) => {
     
     const queryDate = new Date(date as string);
     
+    // Updated query to exclude PENDING appointments
     const appointments = await Appointment.find({
       businessId: businessId,
+      status: { $ne: "PENDING" }, // Exclude PENDING appointments
       ...dateQuery,
       isDeleted: false
     }).sort({ date: 1, startTime: 1 });
@@ -777,10 +779,103 @@ const calculateEndTimeFromServices = async (startTime: string, serviceIds: strin
   return `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}`;
 };
 
-
-
-
-
-
+// Get all pending appointments for a business
+export const getPendingAppointments = async (req: Request, res: Response) => {
+  try {
+    const userId = await validateUserAuth(req, res);
+    if (!userId) return;
+    
+    const businessId = await validateBusinessProfile(userId, res);
+    if (!businessId) return;
+    
+    // Get pagination parameters
+    const pagination = preparePagination(
+      req.query.page as string,
+      req.query.limit as string
+    );
+    
+    // Build date range query if date filters are provided
+    let dateQuery = {};
+    if (req.query.date || req.query.startDate || req.query.endDate) {
+      dateQuery = buildDateRangeQuery(
+        req.query.date, 
+        req.query.startDate, 
+        req.query.endDate
+      );
+      
+      if (dateQuery && (dateQuery as any).error) {
+        return errorResponseHandler(
+          (dateQuery as any).error,
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
+    }
+    
+    // Build the query for pending appointments
+    const query: any = {
+      businessId: businessId,
+      status: "PENDING",
+      isDeleted: false,
+      ...dateQuery
+    };
+    
+    // Add team member filter if provided
+    if (req.query.teamMemberId && mongoose.Types.ObjectId.isValid(req.query.teamMemberId as string)) {
+      query.teamMemberId = req.query.teamMemberId;
+    }
+    
+    // Add client filter if provided
+    if (req.query.clientId && mongoose.Types.ObjectId.isValid(req.query.clientId as string)) {
+      query.clientId = req.query.clientId;
+    }
+    
+    // Add source filter if provided (client_booking or business)
+    if (req.query.source === 'client') {
+      query.createdVia = "client_booking";
+    } else if (req.query.source === 'business') {
+      query.createdVia = { $ne: "client_booking" };
+    }
+    
+    // Count total pending appointments
+    const totalAppointments = await Appointment.countDocuments(query);
+    
+    // Get pending appointments with pagination
+    const pendingAppointments = await Appointment.find(query)
+      .sort({ date: 1, startTime: 1 }) // Sort by date and time
+      .skip(pagination.skip)
+      .limit(pagination.limit);
+    
+    // Prepare pagination metadata
+    const paginationMetadata = preparePaginationMetadata(
+      totalAppointments,
+      pagination,
+      pendingAppointments
+    );
+    
+    // Add source information to each appointment
+    const appointmentsWithSource = pendingAppointments.map(appointment => {
+      const appointmentObj: any = appointment.toObject();
+      appointmentObj.source = appointmentObj.createdVia === "client_booking" ? "client" : "business";
+      return appointmentObj;
+    });
+    
+    return successResponse(
+      res,
+      "Pending appointments fetched successfully",
+      {
+        ...paginationMetadata,
+        appointments: appointmentsWithSource
+      }
+    );
+  } catch (error: any) {
+    console.error("Error fetching pending appointments:", error);
+    const parsedError = errorParser(error);
+    return res.status(parsedError.code).json({
+      success: false,
+      message: parsedError.message,
+    });
+  }
+};
 
 

@@ -1,5 +1,5 @@
 
-import { cancelAppointment, createAppointment, getAppointmentById, getAppointmentsByDate, getTeamMemberAppointments, updateAppointment } from 'controllers/users/userAppointmentController';
+import { cancelAppointment, createAppointment, getAppointmentById, getAppointmentsByDate, getPendingAppointments, getTeamMemberAppointments, updateAppointment } from 'controllers/users/userAppointmentController';
 import { createBusinessProfile, getAllBusinessProfiles, getBusinessProfileById, updateBusinessProfile } from 'controllers/users/userBusinessController';
 import { createCategory, deleteCategories, getAllCategories, getBusinessCategories, getCategoryById, updateCategory } from 'controllers/users/userCategoryController';
 import { createClient, deleteClients, getAllClients, getClientById, updateClientById } from 'controllers/users/userClientController';
@@ -72,6 +72,7 @@ router.delete('/packages', deletePackages);
 // Appointment Routes
 router.post('/appointment', createAppointment);
 router.get('/appointments/by-date', getAppointmentsByDate);
+router.get('/appointments/pending', getPendingAppointments); // New endpoint for pending appointments
 router.get('/team-member/appointments/:teamMemberId', getTeamMemberAppointments);
 router.route('/appointment/:appointmentId').put(updateAppointment).get(getAppointmentById);
 router.post('/appointment/:appointmentId/cancel', cancelAppointment); 
