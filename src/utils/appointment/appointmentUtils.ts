@@ -702,7 +702,7 @@ export const validateRequiredAppointmentFields = (
   if (!clientId || !teamMemberId || !startDate || !startTime || !categoryId) {
     return false;
   }
-  return true;
+  return true;  
 };
 
 // Formats date for response

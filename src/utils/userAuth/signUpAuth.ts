@@ -8,7 +8,7 @@ import jwt from "jsonwebtoken";
 import { Request, Response } from "express";
 import { httpStatusCode } from "../../lib/constant";
 import crypto from "crypto";
-import { sendEmailVerificationMail } from "../mails/mail";
+import { sendEmailVerificationMail, sendPasswordResetEmail } from "../mails/mail";
 
 configDotenv();
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID!, process.env.TWILIO_AUTH_TOKEN!);
@@ -70,6 +70,16 @@ export const generateJwtToken = (userId: string) => {
 export const sendOTP = async (email: string | undefined, phoneNumber: string | undefined, countryCode: string | undefined, otp: string, preferredMethod: string = 'email') => {
   if (preferredMethod === 'email' && email) {
     return await sendEmailVerificationMail(email, otp, 'eng');
+  } else if (phoneNumber && countryCode) {
+    return await generateOtpWithTwilio(`${countryCode}${phoneNumber}`, otp);
+  }
+  return null;
+};
+
+// Send OTP via preferred method
+export const sendResetOTP = async (email: string | undefined, phoneNumber: string | undefined, countryCode: string | undefined, otp: string, preferredMethod: string = 'email') => {
+  if (preferredMethod === 'email' && email) {
+    return await sendPasswordResetEmail(email, otp, 'en');
   } else if (phoneNumber && countryCode) {
     return await generateOtpWithTwilio(`${countryCode}${phoneNumber}`, otp);
   }

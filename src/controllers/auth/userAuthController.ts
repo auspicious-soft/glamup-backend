@@ -10,7 +10,8 @@ import {
   hashPassword, 
   verifyPassword, 
   generateJwtToken, 
-  sendOTP, 
+  sendOTP,
+  sendResetOTP, 
   removeSensitiveData, 
   successResponse 
 } from '../../utils/userAuth/signUpAuth';
@@ -167,12 +168,12 @@ export const ResetPassword = async (req: Request, res: Response) => {
       }
     });
 
-        if (email) {
-      await sendPasswordResetEmail(email, otp, Array.isArray(user.languages) ? user.languages[0] || "en" : user.languages || "en");
-    }
+    //     if (email) {
+    //   await sendPasswordResetEmail(email, otp, Array.isArray(user.languages) ? user.languages[0] || "en" : user.languages || "en");
+    // }
 
     const preferredMethod = req.body.verificationMethod || 'email';
-    await sendOTP(email, phoneNumber, countryCode, otp, preferredMethod);
+    await sendResetOTP(email, phoneNumber, countryCode, otp, preferredMethod);
 
     console.log(otp, "OTP");
     return successResponse(
