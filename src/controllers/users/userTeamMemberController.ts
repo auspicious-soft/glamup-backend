@@ -18,7 +18,75 @@ import {
   handleTransactionError,
   checkDuplicateTeamMemberEmail,
 } from "../../utils/user/usercontrollerUtils";
+import { Readable } from "stream";
+import Busboy from "busboy";
+import {  createS3Client, uploadStreamToS3ofTeamMember, getS3FullUrl } from "../../config/s3";
+import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 
+
+// Helper function to handle file upload to S3
+const uploadProfilePictureToS3 = async (req: Request, userEmail: string): Promise<string | null> => {
+  return new Promise((resolve, reject) => {
+    if (!req.headers["content-type"]?.includes("multipart/form-data")) {
+      resolve(null);
+      return;
+    }
+
+    const busboy = Busboy({ headers: req.headers });
+    let uploadPromise: Promise<string> | null = null;
+
+    busboy.on(
+      "file",
+      async (fieldname: string, fileStream: any, fileInfo: any) => {
+        if (fieldname !== "profilePicture") {
+          fileStream.resume(); 
+          return;
+        }
+
+        const { filename, mimeType } = fileInfo;
+
+        const readableStream = new Readable();
+        readableStream._read = () => {};
+
+        fileStream.on("data", (chunk: any) => {
+          readableStream.push(chunk);
+        });
+
+        fileStream.on("end", () => {
+          readableStream.push(null); 
+        });
+
+        uploadPromise = uploadStreamToS3ofTeamMember(
+          readableStream,
+          filename,
+          mimeType,
+          userEmail
+        );
+      }
+    );
+
+    busboy.on("field", (fieldname, val) => {
+      if (!req.body) req.body = {};
+      req.body[fieldname] = val;
+    });
+
+    busboy.on("finish", async () => {
+      try {
+        if (uploadPromise) {
+          const imageKey = await uploadPromise;
+          const fullUrl = getS3FullUrl(imageKey);
+          resolve(fullUrl);
+        } else {
+          resolve(null);
+        }
+      } catch (error) {
+        reject(error);
+      }
+    });
+
+    req.pipe(busboy);
+  });
+};
 
 // Team Member functions
 export const createTeamMember = async (req: Request, res: Response) => {
@@ -28,14 +96,43 @@ export const createTeamMember = async (req: Request, res: Response) => {
     const userId = await validateUserAuth(req, res, session);
     if (!userId) return;
 
-    const { name, email, phoneNumber, countryCode, gender, birthday, countryCallingCode, profilePicture } =
-      req.body;
+    // Handle profile picture upload if it's a multipart request
+    let profilePictureUrl = "";
+    if (req.headers["content-type"]?.includes("multipart/form-data")) {
+      try {
+        const business = await findUserBusiness(userId, session) as { email?: string } | null;
+        const businessEmail = (business as { email?: string })?.email || userId.toString();
+        
+        const uploadResult = await uploadProfilePictureToS3(req, businessEmail);
+        if (uploadResult) {
+          profilePictureUrl = uploadResult;
+        } else {
+          await session.abortTransaction();
+          session.endSession();
+          return errorResponseHandler(
+            "Unable to process profile image. Please try again with a different image or format.",
+            httpStatusCode.BAD_REQUEST,
+            res
+          );
+        }
+      } catch (uploadError) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          "Unable to process profile image. Please try again with a different image or format.",
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
+    }
+
+    const { name, email, phoneNumber, countryCode, gender, birthday, countryCallingCode } = req.body;
     
-    if (!name || !email || !countryCallingCode || !profilePicture) {
+    if (!name || !email || !countryCallingCode) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
-        "Name, email, Profile Picture and countryCallingCode are required",
+        "Name, email, and countryCallingCode are required",
         httpStatusCode.BAD_REQUEST,
         res
       );
@@ -76,7 +173,7 @@ export const createTeamMember = async (req: Request, res: Response) => {
           birthday,
           businessId: businessId,
           userId: userId,
-          profilePicture,
+          profilePicture: profilePictureUrl || "https://example.com/default-profile.png",
         },
       ],
       { session }
@@ -228,6 +325,31 @@ export const updateTeamMember = async (req: Request, res: Response) => {
       );
     }
 
+    // Handle profile picture upload if it's a multipart request
+    let profilePictureUrl = existingTeamMember.profilePicture;
+    
+    if (req.headers["content-type"]?.includes("multipart/form-data")) {
+      try {
+        const businessEmail = (business as { email?: string })?.email || userId.toString();
+        
+        // Upload new profile picture
+        const uploadResult = await uploadProfilePictureToS3(req, businessEmail);
+        
+        // Update profile picture URL if new one was uploaded
+        if (uploadResult) {
+          profilePictureUrl = uploadResult;
+        }
+      } catch (uploadError) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          "Unable to process profile image. Please try again with a different image or format.",
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
+    }
+
     const {
       name,
       email,
@@ -236,7 +358,6 @@ export const updateTeamMember = async (req: Request, res: Response) => {
       countryCallingCode,
       gender,
       birthday,
-      profilePicture,
       role,
       specialization,
       services,
@@ -272,8 +393,12 @@ export const updateTeamMember = async (req: Request, res: Response) => {
       updateData.countryCallingCode = countryCallingCode;
     if (gender !== undefined) updateData.gender = gender;
     if (birthday !== undefined) updateData.birthday = birthday;
-    if (profilePicture !== undefined)
-      updateData.profilePicture = profilePicture;
+    
+    // Always update profile picture if we have a new one
+    if (profilePictureUrl !== existingTeamMember.profilePicture) {
+      updateData.profilePicture = profilePictureUrl;
+    }
+    
     if (role !== undefined) updateData.role = role;
     if (specialization !== undefined)
       updateData.specialization = specialization;

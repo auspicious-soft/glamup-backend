@@ -9,6 +9,74 @@ import User from "../../models/user/userSchema";
 import UserBusinessProfile from "../../models/business/userBusinessProfileSchema";
 import { validateUserAuth, validateEmail } from "../../utils/user/usercontrollerUtils";
 import mongoose from "mongoose";
+import { Readable } from "stream";
+import Busboy from "busboy";
+import { createS3Client, getS3FullUrl, uploadStreamToS3ofUser } from "../../config/s3";
+import { DeleteObjectCommand } from "@aws-sdk/client-s3";
+
+// Helper function to handle file upload to S3
+const uploadProfilePictureToS3 = async (req: Request, userEmail: string): Promise<string | null> => {
+  return new Promise((resolve, reject) => {
+    if (!req.headers["content-type"]?.includes("multipart/form-data")) {
+      resolve(null);
+      return;
+    }
+
+    const busboy = Busboy({ headers: req.headers });
+    let uploadPromise: Promise<string> | null = null;
+
+    busboy.on(
+      "file",
+      async (fieldname: string, fileStream: any, fileInfo: any) => {
+        if (fieldname !== "profilePic") {
+          fileStream.resume(); 
+          return;
+        }
+
+        const { filename, mimeType } = fileInfo;
+
+        const readableStream = new Readable();
+        readableStream._read = () => {};
+
+        fileStream.on("data", (chunk: any) => {
+          readableStream.push(chunk);
+        });
+
+        fileStream.on("end", () => {
+          readableStream.push(null); 
+        });
+
+        uploadPromise = uploadStreamToS3ofUser(
+          readableStream,
+          filename,
+          mimeType,
+          userEmail
+        );
+      }
+    );
+
+    busboy.on("field", (fieldname, val) => {
+      if (!req.body) req.body = {};
+      req.body[fieldname] = val;
+    });
+
+    busboy.on("finish", async () => {
+      try {
+        if (uploadPromise) {
+          const imageKey = await uploadPromise;
+          const fullUrl = getS3FullUrl(imageKey);
+          resolve(fullUrl);
+        } else {
+          resolve(null);
+        }
+      } catch (error) {
+        reject(error);
+      }
+    });
+
+    req.pipe(busboy);
+  });
+};
 
 export const getUserProfile = async (req: Request, res: Response) => {
   try {
@@ -78,8 +146,6 @@ export const updateUserProfile = async (req: Request, res: Response) => {
     const userId = await validateUserAuth(req, res, session);
     if (!userId) return;
 
-    const { fullName, email, phoneNumber, countryCode, countryCallingCode } = req.body;
-
     const user = await User.findById(userId).session(session);
     if (!user) {
       await session.abortTransaction();
@@ -90,6 +156,31 @@ export const updateUserProfile = async (req: Request, res: Response) => {
         res
       );
     }
+
+    // Handle profile picture upload if it's a multipart request
+    let profilePicUrl = user.profilePic;
+    
+    if (req.headers["content-type"]?.includes("multipart/form-data")) {
+      try {
+        // Upload new profile picture
+        const uploadResult = await uploadProfilePictureToS3(req, user.email);
+        
+        // Update profile picture URL if new one was uploaded
+        if (uploadResult) {
+          profilePicUrl = uploadResult;
+        }
+      } catch (uploadError) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          "Unable to process profile image. Please try again with a different image or format.",
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
+    }
+
+    const { fullName, email, phoneNumber, countryCode, countryCallingCode } = req.body;
 
     const updateData: any = {};
     
@@ -142,6 +233,11 @@ export const updateUserProfile = async (req: Request, res: Response) => {
     }
     if (countryCallingCode !== undefined) {
       updateData.countryCallingCode = countryCallingCode;
+    }
+    
+    // Always update profile picture if we have a new one
+    if (profilePicUrl !== user.profilePic) {
+      updateData.profilePic = profilePicUrl;
     }
 
     if (Object.keys(updateData).length === 0) {
@@ -452,4 +548,5 @@ export const reactivateUserAccount = async (req: Request, res: Response) => {
     });
   }
 };
+
 

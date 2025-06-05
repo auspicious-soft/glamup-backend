@@ -16,32 +16,154 @@ import {
   successResponse 
 } from '../../utils/userAuth/signUpAuth';
 import { sendPasswordResetEmail } from 'utils/mails/mail';
+import { Readable } from "stream";
+import Busboy from "busboy";
+import { uploadStreamToS3ofUser, getS3FullUrl } from "../../config/s3";
+import mongoose from "mongoose";
+
+// Helper function to handle file upload to S3
+const uploadProfilePictureToS3 = async (req: Request): Promise<{ key: string, fullUrl: string } | null> => {
+  return new Promise((resolve, reject) => {
+    if (!req.headers["content-type"]?.includes("multipart/form-data")) {
+      resolve(null);
+      return;
+    }
+
+    const busboy = Busboy({ headers: req.headers });
+    let uploadPromise: Promise<string> | null = null;
+
+    busboy.on(
+      "file",
+      async (fieldname: string, fileStream: any, fileInfo: any) => {
+        console.log("File received:", { fieldname, filename: fileInfo.filename, mimeType: fileInfo.mimeType }); // Debug log
+        if (fieldname !== "profilePic") {
+          fileStream.resume();
+          return;
+        }
+
+        const { filename, mimeType } = fileInfo;
+
+        const readableStream = new Readable();
+        readableStream._read = () => {};
+
+        fileStream.on("data", (chunk: any) => {
+          readableStream.push(chunk);
+        });
+
+        fileStream.on("end", () => {
+          readableStream.push(null);
+        });
+
+        // Wait for email to be parsed from fields
+        if (!req.body?.email || typeof req.body.email !== "string") {
+          reject(new Error("Email is required for profile picture upload"));
+          return;
+        }
+
+        uploadPromise = uploadStreamToS3ofUser(
+          readableStream,
+          filename,
+          mimeType,
+          req.body.email
+        );
+      }
+    );
+
+    busboy.on("field", (fieldname, val) => {
+      console.log("Field received:", { fieldname, value: val }); // Debug log
+      if (!req.body) req.body = {};
+      req.body[fieldname] = val;
+    });
+
+    busboy.on("finish", async () => {
+      try {
+        if (uploadPromise) {
+          const imageKey = await uploadPromise;
+          const fullUrl = getS3FullUrl(imageKey);
+          resolve({ key: imageKey, fullUrl });
+        } else {
+          resolve(null);
+        }
+      } catch (error) {
+        reject(error);
+      }
+    });
+
+    busboy.on("error", (error) => {
+      console.error("Busboy error:", error);
+      reject(error);
+    });
+
+    req.pipe(busboy);
+  });
+};
 
 export const userSignUp = async (req: Request, res: Response) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
-    const { fullName, email, password, phoneNumber, countryCode, profilePic, countryCallingCode } = req.body;
-    const requiredFields = { fullName, email, password, phoneNumber, countryCode, profilePic, countryCallingCode };
+    // Handle profile picture upload if it's a multipart request
+    let profilePicKey = "";
+    let profilePicUrl = "";
+    if (req.headers["content-type"]?.includes("multipart/form-data")) {
+      try {
+        // Wait for Busboy to parse the form data
+        const uploadResult = await uploadProfilePictureToS3(req);
+        if (!uploadResult) {
+          await session.abortTransaction();
+          session.endSession();
+          return errorResponseHandler(
+            "Unable to process profile image. Please try again with a different image or format.",
+            httpStatusCode.BAD_REQUEST,
+            res
+          );
+        }
+        profilePicKey = uploadResult.key;
+        profilePicUrl = uploadResult.fullUrl;
+      } catch (uploadError) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          "Unable to process profile image. Please try again with a different image or format.",
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
+    }
+
+    // Now validate the required fields
+    const { fullName, email, password, phoneNumber, countryCode, countryCallingCode } = req.body;
+    const requiredFields = { fullName, email, password, phoneNumber, countryCode, countryCallingCode };
     const missingFields = Object.entries(requiredFields)
       .filter(([_, value]) => !value)
       .map(([key]) => key);
 
     if (missingFields.length > 0) {
+      await session.abortTransaction();
+      session.endSession();
       return errorResponseHandler(
-        ` ${missingFields.join(', ')} is Required`,
+        `${missingFields.join(", ")} is Required`,
         httpStatusCode.BAD_REQUEST,
         res
       );
     }
 
+    // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
+      await session.abortTransaction();
+      session.endSession();
       return errorResponseHandler("Invalid email format", httpStatusCode.BAD_REQUEST, res);
     }
 
+    // Check for existing user
     const existingUser = await findUserByEmailOrPhone(email, phoneNumber);
     if (existingUser) {
-      const message = existingUser.email === email 
-        ? "User with this email already exists" 
+      await session.abortTransaction();
+      session.endSession();
+      const message = existingUser.email === email
+        ? "User with this email already exists"
         : "User with this phone number already exists";
       return errorResponseHandler(message, httpStatusCode.BAD_REQUEST, res);
     }
@@ -56,28 +178,34 @@ export const userSignUp = async (req: Request, res: Response) => {
       phoneNumber,
       countryCode,
       countryCallingCode,
-      profilePic,
+      profilePic: profilePicUrl || "https://example.com/default-avatar.png",
+      profilePicKey: profilePicKey || "",
       otp: {
-        code: otp, 
+        code: otp,
         expiresAt: otpExpiry,
-        verificationToken: hashedVerificationToken
-      }
+        verificationToken: hashedVerificationToken,
+      },
     });
 
     const token = generateJwtToken(newUser._id.toString());
-    
-    const preferredMethod = req.body.verificationMethod || 'email';
+
+    const preferredMethod = req.body.verificationMethod || "email";
     await sendOTP(email, phoneNumber, countryCode, otp, preferredMethod);
+
+    await session.commitTransaction();
+    session.endSession();
 
     const userWithoutSensitive = removeSensitiveData(newUser);
 
     return successResponse(
-      res, 
+      res,
       `User registered successfully. OTP sent to your ${preferredMethod}.`,
       { ...userWithoutSensitive, verificationToken },
       httpStatusCode.CREATED
     );
   } catch (error: any) {
+    await session.abortTransaction();
+    session.endSession();
     console.error("Signup error:", error);
     const parsedError = errorParser(error);
     return res.status(parsedError.code).json({

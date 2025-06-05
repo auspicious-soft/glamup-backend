@@ -19,7 +19,75 @@ import {
   processClientUpdateData,
 } from "../../utils/user/usercontrollerUtils";
 import Client from "models/client/clientSchema";
+import { Readable } from "stream";
+import Busboy from "busboy";
+import { createS3Client, uploadStreamToS3ofClient, getS3FullUrl } from "../../config/s3";
+import { DeleteObjectCommand } from "@aws-sdk/client-s3";
+import mongoose from "mongoose";
 
+// Helper function to handle file upload to S3
+const uploadProfilePictureToS3 = async (req: Request, userEmail: string): Promise<{ key: string, fullUrl: string } | null> => {
+  return new Promise((resolve, reject) => {
+    if (!req.headers["content-type"]?.includes("multipart/form-data")) {
+      resolve(null);
+      return;
+    }
+
+    const busboy = Busboy({ headers: req.headers });
+    let uploadPromise: Promise<string> | null = null;
+
+    busboy.on(
+      "file",
+      async (fieldname: string, fileStream: any, fileInfo: any) => {
+        if (fieldname !== "profilePicture") {
+          fileStream.resume(); 
+          return;
+        }
+
+        const { filename, mimeType } = fileInfo;
+
+        const readableStream = new Readable();
+        readableStream._read = () => {};
+
+        fileStream.on("data", (chunk: any) => {
+          readableStream.push(chunk);
+        });
+
+        fileStream.on("end", () => {
+          readableStream.push(null); 
+        });
+
+        uploadPromise = uploadStreamToS3ofClient(
+          readableStream,
+          filename,
+          mimeType,
+          userEmail
+        );
+      }
+    );
+
+    busboy.on("field", (fieldname, val) => {
+      if (!req.body) req.body = {};
+      req.body[fieldname] = val;
+    });
+
+    busboy.on("finish", async () => {
+      try {
+        if (uploadPromise) {
+          const imageKey = await uploadPromise;
+          const fullUrl = getS3FullUrl(imageKey);
+          resolve({ key: imageKey, fullUrl });
+        } else {
+          resolve(null);
+        }
+      } catch (error) {
+        reject(error);
+      }
+    });
+
+    req.pipe(busboy);
+  });
+};
 
 // Clients functions
 export const createClient = async (req: Request, res: Response) => {
@@ -32,13 +100,32 @@ export const createClient = async (req: Request, res: Response) => {
     const businessId = await validateBusinessForClient(userId, res, session);
     if (!businessId) return;
 
+    let profilePictureUrl = null;
+    if (req.headers["content-type"]?.includes("multipart/form-data")) {
+      try {
+        const business = await mongoose.model("UserBusinessProfile").findById(businessId);
+        const businessEmail = business?.email || userId.toString();
+        
+        const uploadResult = await uploadProfilePictureToS3(req, businessEmail);
+        profilePictureUrl = uploadResult?.fullUrl || null;
+      } catch (uploadError) {
+        await session.abortTransaction();
+        session.endSession();
+        console.error("Error uploading profile picture:", uploadError);
+        return errorResponseHandler(
+          "Error uploading profile picture",
+          httpStatusCode.INTERNAL_SERVER_ERROR,
+          res
+        );
+      }
+    }
+
     const {
       name,
       email,
       phoneNumber,
       countryCode,
       countryCallingCode,
-      profilePicture,
       birthday,
       gender,
       address,
@@ -70,7 +157,7 @@ export const createClient = async (req: Request, res: Response) => {
           phoneNumber: phoneNumber || "",
           countryCode: countryCode || "+91",
           countryCallingCode: countryCallingCode || "IN",
-          profilePicture: profilePicture || "",
+          profilePicture: profilePictureUrl || "",
           birthday: birthday || null,
           gender: gender || "prefer_not_to_say",
           address: address || {
@@ -193,13 +280,54 @@ export const updateClientById = async (req: Request, res: Response) => {
     const existingClient = await validateClientAccess(clientId, businessId, res, session);
     if (!existingClient) return;
 
+    let profilePictureUrl = existingClient.get('profilePicture');
+    if (req.headers["content-type"]?.includes("multipart/form-data")) {
+      try {
+        const business = await mongoose.model("UserBusinessProfile").findById(businessId);
+        const businessEmail = business?.email || userId.toString();
+        
+        const uploadResult = await uploadProfilePictureToS3(req, businessEmail);
+        
+        if (uploadResult && existingClient.get('profilePicture')) {
+          try {
+            // Extract the key from the full URL if needed
+            const oldPictureUrl = existingClient.get('profilePicture');
+            const oldKey = oldPictureUrl.includes('amazonaws.com/') 
+              ? oldPictureUrl.split('amazonaws.com/')[1]
+              : oldPictureUrl;
+              
+            if (oldKey && oldKey.startsWith('clients/')) {
+              const s3Client = createS3Client();
+              await s3Client.send(new DeleteObjectCommand({
+                Bucket: process.env.AWS_BUCKET_NAME as string,
+                Key: oldKey
+              }));
+            }
+          } catch (deleteError) {
+            console.error("Error deleting old profile picture:", deleteError);
+          }
+        }
+        
+        if (uploadResult) {
+          profilePictureUrl = uploadResult.fullUrl;
+        }
+      } catch (uploadError) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          "Error uploading profile picture",
+          httpStatusCode.INTERNAL_SERVER_ERROR,
+          res
+        );
+      }
+    }
+
     const {
       name,
       email,
       phoneNumber,
       countryCode,
       countryCallingCode,
-      profilePicture,
       birthday,
       gender,
       address,
@@ -233,7 +361,7 @@ export const updateClientById = async (req: Request, res: Response) => {
         phoneNumber,
         countryCode,
         countryCallingCode,
-        profilePicture,
+        profilePicture: profilePictureUrl, // Use the updated profile picture URL
         birthday,
         gender,
         address,
@@ -330,4 +458,3 @@ export const deleteClients = async (req: Request, res: Response) => {
     return handleTransactionError(session, error, res);
   }
 };
-

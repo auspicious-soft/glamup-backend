@@ -186,12 +186,12 @@ export const buildDateRangeQuery = (dateParam: any, startDateParam: any, endDate
 
 // Validates appointment status
 export const validateAppointmentStatus = (status: string): { valid: boolean; message?: string } => {
-  const validStatuses = ["pending", "confirmed", "cancelled", "completed", "no_show"];
+  const validStatuses = ["PENDING", "CONFIRMED", "CANCELLED", "COMPLETED", "NO_SHOW"];
   
   if (!validStatuses.includes(status)) {
     return {
       valid: false,
-      message: "Invalid status. Must be one of: pending, confirmed, cancelled, completed, no_show"
+      message: "Invalid status. Must be one of: PENDING, CONFIRMED, CANCELLED, COMPLETED, NO_SHOW"
     };
   }
   
