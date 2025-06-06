@@ -29,6 +29,7 @@ import ClientAppointment from "models/clientAppointment/clientAppointmentSchema"
 import Service from "models/services/servicesSchema";
 import Business from "models/business/userBusinessProfileSchema";
 import Category from "models/category/categorySchema";
+import Client from "models/client/clientSchema";
 
 export const createAppointment = async (req: Request, res: Response) => {
   const session = await startSession();
@@ -47,12 +48,109 @@ export const createAppointment = async (req: Request, res: Response) => {
       status, 
       serviceIds,
       packageId,
-      discount
+      discount,
+      isNewClient,
+      name,
+      email,
+      phoneNumber,
+      countryCode,
+      countryCallingCode
     } = req.body;
     
-    if (!validateRequiredAppointmentFields(
-      clientId, teamMemberId, startDate, startTime, serviceIds
-    )) {
+    // Get business ID first as it's needed for both paths
+    const businessId = await validateBusinessProfile(userId, res, session);
+    if (!businessId) return;
+    
+    // Handle new client creation if isNewClient is true
+    let finalClientId = clientId;
+    
+    if (isNewClient === true) {
+      // Validate required fields for new client
+      if (!name || !phoneNumber || !countryCallingCode || !countryCode) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          "Name, phone number, country code, and country calling code are required for creating a new client",
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
+      
+ 
+  // Build query to check for existing clients with same phone number
+  const phoneQuery = {
+    phoneNumber,
+    businessId,
+    isDeleted: false
+  };
+  
+  // Check if client with same phone number exists
+  const existingClientByPhone = await Client.findOne(phoneQuery).session(session);
+  if (existingClientByPhone) {
+    await session.abortTransaction();
+    session.endSession();
+    return errorResponseHandler(
+      "A client with this phone number already exists in your business",
+      httpStatusCode.CONFLICT,
+      res
+    );
+  }
+  
+  // If email is provided, check for duplicate email
+  if (email && email.trim() !== '') {
+    const emailQuery = {
+      email,
+      businessId,
+      isDeleted: false
+    };
+    
+    const existingClientByEmail = await Client.findOne(emailQuery).session(session);
+    if (existingClientByEmail) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "A client with this email already exists in your business",
+        httpStatusCode.CONFLICT,
+        res
+      );
+    }
+  }
+  
+  // Create new client with minimal information
+  const newClient = await Client.create(
+    [{
+      name,
+      email: email || "",
+      phoneNumber,
+      countryCode: countryCode || "+91",
+      countryCallingCode: countryCallingCode || "IN",
+      profilePicture: "",
+      birthday: null,
+      gender: "prefer_not_to_say",
+      address: {
+        street: "",
+        city: "",
+        region: "",
+        country: "",
+      },
+      notes: "",
+      tags: [],
+      businessId: businessId,
+      preferredServices: [],
+      preferredTeamMembers: [],
+      lastVisit: null,
+      isActive: true,
+      isDeleted: false,
+    }],
+    { session }
+  ) as unknown as typeof Client[];
+  
+  finalClientId = (newClient[0] as any)._id.toString();
+}
+    
+    // Validate required fields for appointment
+    if (!finalClientId || !teamMemberId || !startDate || !startTime || !serviceIds || 
+        (Array.isArray(serviceIds) && serviceIds.length === 0)) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
@@ -62,20 +160,17 @@ export const createAppointment = async (req: Request, res: Response) => {
       );
     }
     
-    const businessId = await validateBusinessProfile(userId, res, session);
-    if (!businessId) return;
-    
     // Get the category from the first service - check both custom and global services
     let service;
     let categoryId;
     
     // First try to find the service in business-specific services
-    service = await Service.findById(serviceIds[0]);
+    service = await Service.findById(serviceIds[0]).session(session);
     
     // If not found, check in global services
     if (!service) {
       // Find in global services from the business's selected categories
-      const business = await Business.findById(businessId);
+      const business = await Business.findById(businessId).session(session);
       if (!business) {
         await session.abortTransaction();
         session.endSession();
@@ -91,7 +186,7 @@ export const createAppointment = async (req: Request, res: Response) => {
       
       // Find the global service within the selected categories
       for (const catId of selectedCategories) {
-        const category = await Category.findById(catId).populate('services');
+        const category = await Category.findById(catId).populate('services').session(session);
         const categoryServices = category?.get('services');
         if (category && categoryServices) {
           const globalService = categoryServices.find(
@@ -139,7 +234,7 @@ export const createAppointment = async (req: Request, res: Response) => {
       new Date(endDate || startDate),
       startTime,
       finalEndTime,
-      clientId
+      finalClientId
     );
     
     if (!isAvailable) {
@@ -151,16 +246,18 @@ export const createAppointment = async (req: Request, res: Response) => {
         res
       );
     }
-
+    
     const validationResult = await validateAppointmentEntities(
-      clientId,
+      finalClientId,
       teamMemberId,
       categoryId.toString(), // Use the category from the service
       serviceIds || [],
       new Date(startDate),
       new Date(endDate || startDate),
       packageId,
-      businessId.toString()
+      businessId.toString(),
+      undefined,
+      session
     );
     
     if (!validationResult.valid) {
@@ -183,7 +280,7 @@ export const createAppointment = async (req: Request, res: Response) => {
       new Date(startDate),
       new Date(endDate || startDate),
       startTime,
-      endTime,
+      finalEndTime,
       validationResult.totalDuration ?? 0,
       validationResult.totalPrice ?? 0,
       discount || 0,
@@ -239,21 +336,27 @@ export const getAppointmentsByDate = async (req: Request, res: Response) => {
     
     const queryDate = new Date(date as string);
     
-    // Updated query to exclude PENDING appointments
+    // Updated query to exclude PENDING appointments and appointments with deleted clients
     const appointments = await Appointment.find({
       businessId: businessId,
       status: { $ne: "PENDING" }, // Exclude PENDING appointments
       ...dateQuery,
       isDeleted: false
+    }).populate({
+      path: 'clientId',
+      match: { isDeleted: false } // Only include appointments where client is not deleted
     }).sort({ date: 1, startTime: 1 });
+    
+    // Filter out appointments where client is deleted (populate returned null)
+    const filteredAppointments = appointments.filter(appointment => appointment.clientId);
     
     return successResponse(
       res,
       "Appointments fetched successfully",
       { 
         date: formatDateForResponse(queryDate),
-        count: appointments.length,
-        appointments 
+        count: filteredAppointments.length,
+        appointments: filteredAppointments 
       }
     );
   } catch (error: any) {
@@ -318,14 +421,22 @@ export const getTeamMemberAppointments = async (req: Request, res: Response) => 
     const totalAppointments = await Appointment.countDocuments(query);
     
     const appointments = await Appointment.find(query)
+      .populate({
+        path: 'clientId',
+        match: { isDeleted: false } // Only include appointments where client is not deleted
+      })
       .sort({ date: 1, startTime: 1 })
       .skip(pagination.skip)
       .limit(pagination.limit);
     
+    // Filter out appointments where client is deleted (populate returned null)
+    const filteredAppointments = appointments.filter(appointment => appointment.clientId);
+    
+    // Recalculate pagination metadata with filtered results
     const paginationMetadata = preparePaginationMetadata(
-      totalAppointments,
+      filteredAppointments.length, // Use filtered count instead of total
       pagination,
-      appointments
+      filteredAppointments
     );
     
     return successResponse(
@@ -334,7 +445,7 @@ export const getTeamMemberAppointments = async (req: Request, res: Response) => 
       {
         teamMember: prepareTeamMemberResponse(teamMember),
         ...paginationMetadata,
-        appointments
+        appointments: filteredAppointments
       }
     );
   } catch (error: any) {

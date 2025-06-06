@@ -452,24 +452,35 @@ export const validateAppointmentEntities = async (
   startDate: Date,
   endDate: Date,
   packageId?: string,
-  businessId?: string
+  businessId?: string,
+  finalClientId?: string,
+  session?: mongoose.ClientSession
 ): Promise<any> => {
   try {
-    // Validate client
-    const client = await Client.findOne({
+    // Validate client - use session if provided
+    const clientQuery = {
       _id: clientId,
       isDeleted: false
-    });
+    };
+    
+    const client = session 
+      ? await Client.findOne(clientQuery).session(session)
+      : await Client.findOne(clientQuery);
     
     if (!client) {
+      console.log(`Client not found with ID: ${clientId}`);
       return { valid: false, message: "Client not found" };
     }
     
-    // Validate team member
-    const teamMember = await TeamMember.findOne({
+    // Validate team member - use session if provided
+    const teamMemberQuery = {
       _id: teamMemberId,
       isDeleted: false
-    });
+    };
+    
+    const teamMember = session
+      ? await TeamMember.findOne(teamMemberQuery).session(session)
+      : await TeamMember.findOne(teamMemberQuery);
     
     if (!teamMember) {
       return { valid: false, message: "Team member not found" };
