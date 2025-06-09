@@ -263,60 +263,89 @@ export const deleteGlobalCategory = async (req: Request, res: Response) => {
   }
 };
 
-// Get businesses by global category ID
+// Get businesses by global category IDs
 export const getBusinessesByGlobalCategory = async (req: Request, res: Response) => {
   try {
-    const { categoryId } = req.params;
+    const { categoryIds } = req.body;
     
-    if (!mongoose.Types.ObjectId.isValid(categoryId)) {
+    if (!categoryIds || !Array.isArray(categoryIds) || categoryIds.length === 0) {
       return errorResponseHandler(
-        "Invalid category ID format",
+        "Please provide an array of global category IDs",
         httpStatusCode.BAD_REQUEST,
         res
       );
     }
     
-    // Check if the global category exists
-    const globalCategory = await GlobalCategory.findOne({
-      _id: categoryId,
+    const invalidIds = categoryIds.filter(id => !mongoose.Types.ObjectId.isValid(id));
+    if (invalidIds.length > 0) {
+      return errorResponseHandler(
+        "Invalid category ID format detected",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+    
+    const globalCategories = await GlobalCategory.find({
+      _id: { $in: categoryIds },
       isActive: true,
       isDeleted: false
     });
     
-    if (!globalCategory) {
+    if (globalCategories.length === 0) {
       return errorResponseHandler(
-        "Global category not found or inactive",
+        "No valid global categories found",
         httpStatusCode.NOT_FOUND,
         res
       );
     }
     
-    // Find all business profiles that have selected this category
-    const businessProfiles = await UserBusinessProfile.find({
-      "selectedCategories.categoryId": categoryId,
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    const skip = (page - 1) * limit;
+    
+    const query = {
+      "selectedCategories.categoryId": { $in: categoryIds },
       isDeleted: false,
       status: "active"
-    }).select(
-      "businessName businessProfilePic PhoneNumber countryCode email businessDescription " +
-      "websiteLink facebookLink instagramLink messengerLink country "
-    ).sort({ createdAt: -1 });
+    };
+    
+    const totalBusinesses = await UserBusinessProfile.countDocuments(query);
+    
+    const businessProfiles = await UserBusinessProfile.find(query)
+      .select(
+        "businessName businessProfilePic PhoneNumber countryCode email businessDescription " +
+        "websiteLink facebookLink instagramLink messengerLink country "
+      )
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+    
+    const totalPages = Math.ceil(totalBusinesses / limit);
     
     return successResponse(
       res,
       "Business profiles fetched successfully",
       { 
-        category: {
-          _id: globalCategory._id,
-          name: globalCategory.name,
-          description: globalCategory.description || ""
-        },
+        categories: globalCategories.map(cat => ({
+          _id: cat._id,
+          name: cat.name,
+          description: cat.description || ""
+        })),
         businessProfiles,
-        count: businessProfiles.length
+        count: businessProfiles.length,
+        pagination: {
+          totalBusinesses,
+          totalPages,
+          currentPage: page,
+          limit,
+          hasNextPage: page < totalPages,
+          hasPrevPage: page > 1
+        }
       },
       httpStatusCode.OK
     );
   } catch (error: any) {
-    console.error("Error fetching businesses by global category:", error);
+    console.error("Error fetching businesses by global categories:", error);
     const parsedError = errorParser(error);
     return errorResponseHandler(
       parsedError.message,
