@@ -159,6 +159,8 @@ export const updateUserProfile = async (req: Request, res: Response) => {
 
     // Handle profile picture upload if it's a multipart request
     let profilePicUrl = user.profilePic;
+    let profilePicUpdated = false;
+    const isDefaultImage = profilePicUrl.includes("dummyUserPic.png");
     
     if (req.headers["content-type"]?.includes("multipart/form-data")) {
       try {
@@ -167,16 +169,42 @@ export const updateUserProfile = async (req: Request, res: Response) => {
         
         // Update profile picture URL if new one was uploaded
         if (uploadResult) {
-          profilePicUrl = uploadResult;
+          // If user already has a custom profile picture (not the default one),
+          // we should delete the old one from S3
+          if (!isDefaultImage) {
+            try {
+              const s3Client = createS3Client();
+              // Extract the key from the full URL
+              const oldKey = profilePicUrl.split('amazonaws.com/')[1];
+              
+              if (oldKey && oldKey.startsWith('users/')) {
+                const deleteParams = {
+                  Bucket: process.env.AWS_BUCKET_NAME as string,
+                  Key: oldKey
+                };
+                
+                await s3Client.send(new DeleteObjectCommand(deleteParams));
+                console.log("Successfully deleted old profile picture:", oldKey);
+              }
+              
+              // Only mark as updated if both upload and deletion (if needed) were successful
+              profilePicUrl = uploadResult;
+              profilePicUpdated = true;
+              console.log("New profile picture URL:", profilePicUrl);
+            } catch (deleteError) {
+              console.error("Error deleting old profile picture:", deleteError);
+              // Don't update profile pic if deletion fails
+            }
+          } else {
+            // For default image, no deletion needed
+            profilePicUrl = uploadResult;
+            profilePicUpdated = true;
+            console.log("New profile picture URL:", profilePicUrl);
+          }
         }
       } catch (uploadError) {
-        await session.abortTransaction();
-        session.endSession();
-        return errorResponseHandler(
-          "Unable to process profile image. Please try again with a different image or format.",
-          httpStatusCode.BAD_REQUEST,
-          res
-        );
+        console.error("Error uploading profile picture:", uploadError);
+        // Don't update profile pic if upload fails
       }
     }
 
@@ -235,8 +263,8 @@ export const updateUserProfile = async (req: Request, res: Response) => {
       updateData.countryCallingCode = countryCallingCode;
     }
     
-    // Always update profile picture if we have a new one
-    if (profilePicUrl !== user.profilePic) {
+    // Only update profile picture if the entire process was successful
+    if (profilePicUpdated) {
       updateData.profilePic = profilePicUrl;
     }
 

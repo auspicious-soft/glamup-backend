@@ -110,25 +110,16 @@ export const userSignUp = async (req: Request, res: Response) => {
       try {
         // Wait for Busboy to parse the form data
         const uploadResult = await uploadProfilePictureToS3(req);
-        if (!uploadResult) {
-          await session.abortTransaction();
-          session.endSession();
-          return errorResponseHandler(
-            "Unable to process profile image. Please try again with a different image or format.",
-            httpStatusCode.BAD_REQUEST,
-            res
-          );
+        if (uploadResult) {
+          profilePicKey = uploadResult.key;
+          profilePicUrl = uploadResult.fullUrl;
         }
-        profilePicKey = uploadResult.key;
-        profilePicUrl = uploadResult.fullUrl;
+        // If no profile picture was uploaded, we'll use the default dummy image
+        // No need to return an error
       } catch (uploadError) {
-        await session.abortTransaction();
-        session.endSession();
-        return errorResponseHandler(
-          "Unable to process profile image. Please try again with a different image or format.",
-          httpStatusCode.BAD_REQUEST,
-          res
-        );
+        console.error("Error uploading profile picture:", uploadError);
+        // Continue with user registration even if upload fails
+        // The default dummy image will be used
       }
     }
 
@@ -178,7 +169,7 @@ export const userSignUp = async (req: Request, res: Response) => {
       phoneNumber,
       countryCode,
       countryCallingCode,
-      profilePic: profilePicUrl || "https://example.com/default-avatar.png",
+      profilePic: profilePicUrl || "https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/dummyUserPic.png",
       profilePicKey: profilePicKey || "",
       otp: {
         code: otp,

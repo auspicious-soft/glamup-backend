@@ -84,6 +84,85 @@ const validateAndProcessGlobalCategories = async (
   }
 };
 
+const parseFormDataAndUpload = async (
+  req: Request,
+  businessEmail: string
+): Promise<{ formData: any; uploadResult: { key: string; fullUrl: string } | null }> => {
+  return new Promise((resolve, reject) => {
+    const formData: any = {};
+    let uploadPromise: Promise<string> | null = null;
+
+    if (!req.headers["content-type"]?.includes("multipart/form-data")) {
+      resolve({ formData, uploadResult: null });
+      return;
+    }
+
+    const busboy = Busboy({ headers: req.headers });
+
+    busboy.on("field", (fieldname, val) => {
+      try {
+        // Parse JSON fields like arrays and objects
+        if (["selectedCategories", "businessHours", "address"].includes(fieldname)) {
+          try {
+            formData[fieldname] = JSON.parse(val);
+          } catch (e) {
+            formData[fieldname] = val;
+          }
+        } else {
+          formData[fieldname] = val;
+        }
+      } catch (error) {
+        console.error(`Error parsing field ${fieldname}:`, error);
+        formData[fieldname] = val;
+      }
+    });
+
+    busboy.on("file", async (fieldname, fileStream, fileInfo) => {
+      if (fieldname !== "businessProfilePic") {
+        fileStream.resume();
+        return;
+      }
+
+      const { filename, mimeType } = fileInfo;
+      const readableStream = new Readable();
+      readableStream._read = () => {};
+
+      fileStream.on("data", (chunk: any) => {
+        readableStream.push(chunk);
+      });
+
+      fileStream.on("end", () => {
+        readableStream.push(null);
+      });
+
+      uploadPromise = uploadStreamToS3BusinessProfile(
+        readableStream,
+        filename,
+        mimeType,
+        businessEmail
+      );
+    });
+
+    busboy.on("finish", async () => {
+      try {
+        const uploadResult = uploadPromise
+          ? { key: await uploadPromise, fullUrl: getS3FullUrl(await uploadPromise) }
+          : null;
+        resolve({ formData, uploadResult });
+      } catch (error) {
+        reject(error);
+      }
+    });
+
+    busboy.on("error", (error) => {
+      console.error("Busboy error:", error);
+      reject(error);
+    });
+
+    req.pipe(busboy);
+  });
+};
+
 const uploadProfilePictureToS3 = async (req: Request, businessEmail: string): Promise<{ key: string, fullUrl: string } | null> => {
   return new Promise((resolve, reject) => {
     if (!req.headers["content-type"]?.includes("multipart/form-data")) {
@@ -175,6 +254,10 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       );
     }
 
+    // Extract email from request body or fallback to empty string
+    const emailFromBody = req.body?.email || "";
+    const { formData, uploadResult } = await parseFormDataAndUpload(req, emailFromBody);
+
     const {
       businessName,
       businessDescription,
@@ -190,11 +273,9 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       country,
       selectedCategories,
       businessHours,
-    } = req.body || {};
+    } = formData;
 
-    const uploadResult = await uploadProfilePictureToS3(req, email);
     let businessProfilePic: string | undefined;
-
     if (uploadResult) {
       businessProfilePic = uploadResult.key;
     }
@@ -310,7 +391,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
           facebookLink,
           instagramLink,
           messengerLink,
-          businessProfilePic, 
+          businessProfilePic,
           address,
           country,
           selectedCategories: processedCategories,
