@@ -4,6 +4,7 @@ import {
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { createClient } from "controllers/users/userClientController";
 import { configDotenv } from "dotenv";
 import { Readable } from "stream";
 configDotenv();
@@ -12,8 +13,9 @@ const {
   AWS_ACCESS_KEY_ID,
   AWS_REGION,
   AWS_SECRET_ACCESS_KEY,
-  AWS_BUCKET_NAME,
 } = process.env;
+
+export const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME;
 
 export const createS3Client = () => {
   return new S3Client({
@@ -90,18 +92,15 @@ export const uploadStreamToS3ofTeamMember = async (
   userEmail: string
 ): Promise<string> => {
   try {
-    // Generate a unique key for the file
     const timestamp = Date.now();
     const key = `team-members/${userEmail}/profile-pictures/${timestamp}-${fileName}`;
 
-    // Convert stream to buffer for S3 upload
     const chunks: any[] = [];
     for await (const chunk of fileStream) {
       chunks.push(chunk);
     }
     const buffer = Buffer.concat(chunks);
 
-    // Upload to S3
     const s3Client = createS3Client();
     const uploadParams = {
       Bucket: AWS_BUCKET_NAME,
@@ -112,7 +111,6 @@ export const uploadStreamToS3ofTeamMember = async (
 
     await s3Client.send(new PutObjectCommand(uploadParams));
 
-    // Return the S3 object key
     return key;
   } catch (error) {
     console.error("Error uploading to S3:", error);
@@ -127,18 +125,15 @@ export const uploadStreamToS3ofUser = async (
   userEmail: string
 ): Promise<string> => {
   try {
-    // Generate a unique key for the file
     const timestamp = Date.now();
     const key = `users/${userEmail}/profile-pictures/${timestamp}-${fileName}`;
 
-    // Convert stream to buffer for S3 upload
     const chunks: any[] = [];
     for await (const chunk of fileStream) {
       chunks.push(chunk);
     }
     const buffer = Buffer.concat(chunks);
 
-    // Upload to S3
     const s3Client = createS3Client();
     const uploadParams = {
       Bucket: AWS_BUCKET_NAME,
@@ -149,13 +144,45 @@ export const uploadStreamToS3ofUser = async (
 
     await s3Client.send(new PutObjectCommand(uploadParams));
 
-    // Return the S3 object key
     return key;
   } catch (error) {
     console.error("Error uploading to S3:", error);
     throw error;
   }
 };
+
+export const uploadStreamToS3BusinessProfile = async (
+  fileStream: Readable,
+  fileName: string,
+  fileType: string,
+  userEmail: string
+): Promise<string> => {
+  try {
+    const timestamp = Date.now();
+    const key = `business-profiles/${userEmail}/profile-pictures/${timestamp}-${fileName}`;
+    
+    const chunks: any[] = [];
+    for await (const chunk of fileStream) {
+      chunks.push(chunk);
+    }
+    const buffer = Buffer.concat(chunks);
+    
+    const s3Client = createS3Client();
+    const uploadParams = {
+      Bucket: AWS_BUCKET_NAME,
+      Key: key,
+      Body: buffer,
+      ContentType: fileType,
+    };
+    
+    await s3Client.send(new PutObjectCommand(uploadParams));
+    return key;
+  } catch (error) {
+    console.error("Error uploading to S3:", error);
+    throw error;
+  }
+};
+
 export const deleteFileFromS3 = async (imageKey: string) => {
   const params = {
     Bucket: process.env.AWS_BUCKET_NAME,

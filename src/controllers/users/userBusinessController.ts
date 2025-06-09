@@ -20,8 +20,16 @@ import {
 } from "../../utils/user/usercontrollerUtils";
 import User from "../../models/user/userSchema";
 import GlobalCategory from "../../models/globalCategory/globalCategorySchema";
+import { Readable } from "stream";
+import Busboy from "busboy";
+import { 
+  createS3Client, 
+  getS3FullUrl, 
+  uploadStreamToS3BusinessProfile, 
+  AWS_BUCKET_NAME 
+} from "../../config/s3";
+import { DeleteObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 
-// Helper function to validate and process global categories
 const validateAndProcessGlobalCategories = async (
   categoryIds: string[],
   res: Response,
@@ -76,13 +84,96 @@ const validateAndProcessGlobalCategories = async (
   }
 };
 
+const uploadProfilePictureToS3 = async (req: Request, businessEmail: string): Promise<{ key: string, fullUrl: string } | null> => {
+  return new Promise((resolve, reject) => {
+    if (!req.headers["content-type"]?.includes("multipart/form-data")) {
+      resolve(null);
+      return;
+    }
+
+    const busboy = Busboy({ headers: req.headers });
+    let uploadPromise: Promise<string> | null = null;
+
+    busboy.on(
+      "file",
+      async (fieldname: string, fileStream: any, fileInfo: any) => {
+        if (fieldname !== "businessProfilePic") {
+          fileStream.resume();
+          return;
+        }
+
+        const { filename, mimeType } = fileInfo;
+
+        const readableStream = new Readable();
+        readableStream._read = () => {};
+
+        fileStream.on("data", (chunk: any) => {
+          readableStream.push(chunk);
+        });
+
+        fileStream.on("end", () => {
+          readableStream.push(null);
+        });
+
+        // Use the provided business email
+        uploadPromise = uploadStreamToS3BusinessProfile(
+          readableStream,
+          filename,
+          mimeType,
+          businessEmail
+        );
+      }
+    );
+
+    busboy.on("field", (fieldname, val) => {
+      if (!req.body) req.body = {};
+      req.body[fieldname] = val;
+    });
+
+    busboy.on("finish", async () => {
+      try {
+        if (uploadPromise) {
+          const imageKey = await uploadPromise;
+          const fullUrl = getS3FullUrl(imageKey);
+          resolve({ key: imageKey, fullUrl });
+        } else {
+          resolve(null);
+        }
+      } catch (error) {
+        reject(error);
+      }
+    });
+
+    busboy.on("error", (error) => {
+      console.error("Busboy error:", error);
+      reject(error);
+    });
+
+    req.pipe(busboy);
+  });
+};
+
 // Business Profile functions
 export const createBusinessProfile = async (req: Request, res: Response) => {
   const session = await startSession();
 
   try {
     const userId = await validateUserAuth(req, res, session);
-    if (!userId) return;
+    if (!userId) {
+      await session.abortTransaction();
+      session.endSession();
+      return;
+    }
+
+    if (!req.headers["content-type"]?.includes("multipart/form-data")) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Request must be multipart/form-data",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
 
     const {
       businessName,
@@ -95,12 +186,18 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       facebookLink,
       instagramLink,
       messengerLink,
-      businessProfilePic,
       address,
       country,
       selectedCategories,
       businessHours,
-    } = req.body;
+    } = req.body || {};
+
+    const uploadResult = await uploadProfilePictureToS3(req, email);
+    let businessProfilePic: string | undefined;
+
+    if (uploadResult) {
+      businessProfilePic = uploadResult.key;
+    }
 
     if (!businessName) {
       await session.abortTransaction();
@@ -112,18 +209,17 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       );
     }
 
-      if (!countryCallingCode) {
+    if (!countryCallingCode) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
-        "country Calling code is required",
+        "Country calling code is required",
         httpStatusCode.BAD_REQUEST,
         res
       );
     }
 
     const existingBusiness = await findUserBusiness(userId, session);
-
     if (existingBusiness) {
       await session.abortTransaction();
       session.endSession();
@@ -144,11 +240,14 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
         res,
         session
       );
-      if (processedCategoriesResult === null) return;
+      if (processedCategoriesResult === null) {
+        await session.abortTransaction();
+        session.endSession();
+        return;
+      }
       processedCategories = processedCategoriesResult;
     }
 
-    // Process business hours
     let processedBusinessHours: BusinessHours = {
       monday: { isOpen: true, timeSlots: [{ open: "09:00", close: "17:00" }] },
       tuesday: { isOpen: true, timeSlots: [{ open: "09:00", close: "17:00" }] },
@@ -211,7 +310,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
           facebookLink,
           instagramLink,
           messengerLink,
-          businessProfilePic,
+          businessProfilePic, 
           address,
           country,
           selectedCategories: processedCategories,
@@ -232,10 +331,17 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
     await session.commitTransaction();
     session.endSession();
 
+    const responseData = {
+      businessProfile: {
+        ...newBusinessProfile[0].toObject(),
+        businessProfilePicUrl: businessProfilePic ? getS3FullUrl(businessProfilePic) : undefined,
+      },
+    };
+
     return successResponse(
       res,
       "Business profile created successfully",
-      { businessProfile: newBusinessProfile[0] },
+      responseData,
       httpStatusCode.CREATED
     );
   } catch (error: any) {
@@ -309,14 +415,23 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
   const session = await startSession();
 
   try {
+    // Validate user authentication
     const userId = await validateUserAuth(req, res, session);
-    if (!userId) return;
-
-    const { profileId } = req.params;
-
-    if (!(await validateObjectId(profileId, "Business profile", res, session)))
+    if (!userId) {
+      await session.abortTransaction();
+      session.endSession();
       return;
+    }
 
+    // Validate profileId
+    const { profileId } = req.params;
+    if (!(await validateObjectId(profileId, "Business profile", res, session))) {
+      await session.abortTransaction();
+      session.endSession();
+      return;
+    }
+
+    // Find existing business profile
     const existingProfile = await UserBusinessProfile.findOne({
       _id: profileId,
       ownerId: userId,
@@ -333,6 +448,65 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       );
     }
 
+    // Handle profile picture upload if it's a multipart request
+    let businessProfilePic = existingProfile.businessProfilePic;
+    if (req.headers["content-type"]?.includes("multipart/form-data")) {
+      try {
+        const isDummyImage = businessProfilePic.includes("DummyBusinessProfilePic.png");
+        const businessEmail = existingProfile.email || userId.toString();
+        
+        const s3Client = createS3Client();
+        const folderPrefix = `business-profiles/${businessEmail}/profile-pictures/`;
+        
+        let folderExists = false;
+        if (!isDummyImage) {
+          folderExists = true;
+        } else {
+          try {
+            const listParams = {
+              Bucket: AWS_BUCKET_NAME,
+              Prefix: folderPrefix,
+              MaxKeys: 1
+            };
+            
+            const listResult = await s3Client.send(new ListObjectsV2Command(listParams));
+            folderExists = !!(listResult.Contents && listResult.Contents.length > 0);
+          } catch (error) {
+            console.error("Error checking S3 folder:", error);
+            folderExists = false;
+          }
+        }
+        
+        const uploadResult = await uploadProfilePictureToS3(req, businessEmail);
+        
+        if (uploadResult) {
+          if (!isDummyImage) {
+            try {
+              const deleteParams = {
+                Bucket: AWS_BUCKET_NAME,
+                Key: businessProfilePic
+              };
+              
+              await s3Client.send(new DeleteObjectCommand(deleteParams));
+            } catch (deleteError) {
+              console.error("Error deleting old profile picture:", deleteError);
+            }
+          }
+          
+          businessProfilePic = uploadResult.key;
+        }
+      } catch (uploadError: any) {
+        console.error("Profile picture upload error:", uploadError);
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          "Unable to process profile image. Please try again with a different image or format.",
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
+    }
+
     const {
       businessName,
       businessDescription,
@@ -344,14 +518,14 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       facebookLink,
       instagramLink,
       messengerLink,
-      businessProfilePic,
       address,
       country,
       selectedCategories,
       businessHours,
-    } = req.body;
+    } = req.body || {};
 
-    let processedCategories: any = (existingProfile as any).selectedCategories;
+    // Process categories
+    let processedCategories: any = existingProfile.selectedCategories;
     if (
       selectedCategories &&
       Array.isArray(selectedCategories) &&
@@ -362,13 +536,16 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
         res,
         session
       );
-      if (processedCategoriesResult === null) return;
+      if (processedCategoriesResult === null) {
+        await session.abortTransaction();
+        session.endSession();
+        return;
+      }
       processedCategories = processedCategoriesResult;
     }
 
-    let processedBusinessHours =
-      existingProfile.businessHours as unknown as BusinessHours;
-
+    // Process business hours
+    let processedBusinessHours = existingProfile.businessHours as unknown as BusinessHours;
     if (businessHours && typeof businessHours === "object") {
       const days = [
         "monday",
@@ -414,40 +591,62 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       }
     }
 
+    // Prepare update data
+    const updateData: any = {
+      ...(businessName && { businessName }),
+      ...(businessDescription !== undefined && { businessDescription }),
+      ...(phoneNumber && { PhoneNumber: phoneNumber }),
+      ...(countryCode && { countryCode }),
+      ...(countryCallingCode && { countryCallingCode }),
+      ...(email !== undefined && { email }),
+      ...(websiteLink !== undefined && { websiteLink }),
+      ...(facebookLink !== undefined && { facebookLink }),
+      ...(instagramLink !== undefined && { instagramLink }),
+      ...(messengerLink !== undefined && { messengerLink }),
+      ...(businessProfilePic !== existingProfile.businessProfilePic && { businessProfilePic }),
+      ...(address && { address }),
+      ...(country !== undefined && { country }),
+      ...(selectedCategories && { selectedCategories: processedCategories }),
+      ...(businessHours && { businessHours: processedBusinessHours }),
+    };
+
+    // Update business profile
     const updatedProfile = await UserBusinessProfile.findByIdAndUpdate(
       profileId,
-      {
-        $set: {
-          ...(businessName && { businessName }),
-          ...(businessDescription !== undefined && { businessDescription }),
-          ...(phoneNumber && { PhoneNumber: phoneNumber }),
-          ...(countryCode && { countryCode }),
-          ...(countryCallingCode && { countryCallingCode }),
-          ...(email !== undefined && { email }),
-          ...(websiteLink !== undefined && { websiteLink }),
-          ...(facebookLink !== undefined && { facebookLink }),
-          ...(instagramLink !== undefined && { instagramLink }),
-          ...(messengerLink !== undefined && { messengerLink }),
-          ...(businessProfilePic && { businessProfilePic }),
-          ...(address && { address }),
-          ...(country !== undefined && { country }),
-          ...(selectedCategories && { selectedCategories: processedCategories }),
-          ...(businessHours && { businessHours: processedBusinessHours }),
-        },
-      },
+      { $set: updateData },
       { new: true, session }
     );
 
+    if (!updatedProfile) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Failed to update business profile",
+        httpStatusCode.INTERNAL_SERVER_ERROR,
+        res
+      );
+    }
+
+    // Commit transaction
     await session.commitTransaction();
     session.endSession();
+
+    // Prepare response with full S3 URL
+    const responseData = {
+      businessProfile: {
+        ...updatedProfile.toObject(),
+        businessProfilePicUrl: getS3FullUrl(updatedProfile.businessProfilePic),
+      },
+    };
 
     return successResponse(
       res,
       "Business profile updated successfully",
-      { businessProfile: updatedProfile },
+      responseData,
       httpStatusCode.OK
     );
   } catch (error: any) {
+    console.error("Error in updateBusinessProfile:", error);
     return handleTransactionError(session, error, res);
   }
 };

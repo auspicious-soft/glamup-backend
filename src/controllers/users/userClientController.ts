@@ -109,14 +109,9 @@ export const createClient = async (req: Request, res: Response) => {
         const uploadResult = await uploadProfilePictureToS3(req, businessEmail);
         profilePictureUrl = uploadResult?.fullUrl || null;
       } catch (uploadError) {
-        await session.abortTransaction();
-        session.endSession();
+        // Log the error but continue with client creation
         console.error("Error uploading profile picture:", uploadError);
-        return errorResponseHandler(
-          "Error uploading profile picture",
-          httpStatusCode.INTERNAL_SERVER_ERROR,
-          res
-        );
+        // No need to abort transaction or return error
       }
     }
 
@@ -157,7 +152,8 @@ export const createClient = async (req: Request, res: Response) => {
           phoneNumber: phoneNumber || "",
           countryCode: countryCode || "+91",
           countryCallingCode: countryCallingCode || "IN",
-          profilePicture: profilePictureUrl || "",
+          // If no profile picture was uploaded, the schema default will be used
+          profilePicture: profilePictureUrl || "https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/dummyClientPicture.png" ,
           birthday: birthday || null,
           gender: gender || "prefer_not_to_say",
           address: address || {
@@ -281,6 +277,8 @@ export const updateClientById = async (req: Request, res: Response) => {
     if (!existingClient) return;
 
     let profilePictureUrl = existingClient.get('profilePicture');
+    let isDummyImage = profilePictureUrl.includes('dummyClientPicture.png');
+    
     if (req.headers["content-type"]?.includes("multipart/form-data")) {
       try {
         const business = await mongoose.model("UserBusinessProfile").findById(businessId);
@@ -288,28 +286,35 @@ export const updateClientById = async (req: Request, res: Response) => {
         
         const uploadResult = await uploadProfilePictureToS3(req, businessEmail);
         
-        if (uploadResult && existingClient.get('profilePicture')) {
-          try {
-            // Extract the key from the full URL if needed
-            const oldPictureUrl = existingClient.get('profilePicture');
-            const oldKey = oldPictureUrl.includes('amazonaws.com/') 
-              ? oldPictureUrl.split('amazonaws.com/')[1]
-              : oldPictureUrl;
-              
-            if (oldKey && oldKey.startsWith('clients/')) {
-              const s3Client = createS3Client();
-              await s3Client.send(new DeleteObjectCommand({
-                Bucket: process.env.AWS_BUCKET_NAME as string,
-                Key: oldKey
-              }));
+        if (uploadResult && uploadResult.fullUrl) {
+          // Only try to delete the old image if it's not the dummy image
+          if (!isDummyImage && existingClient.get('profilePicture')) {
+            try {
+              // Extract the key from the full URL
+              const oldPictureUrl = existingClient.get('profilePicture');
+              const oldKey = oldPictureUrl.includes('amazonaws.com/') 
+                ? oldPictureUrl.split('amazonaws.com/')[1]
+                : oldPictureUrl;
+                
+              if (oldKey && oldKey.startsWith('clients/')) {
+                const s3Client = createS3Client();
+                await s3Client.send(new DeleteObjectCommand({
+                  Bucket: process.env.AWS_BUCKET_NAME as string,
+                  Key: oldKey
+                }));
+                console.log("Successfully deleted old client profile picture:", oldKey);
+              }
+            } catch (deleteError) {
+              console.error("Error deleting old profile picture:", deleteError);
+              // Continue with the update even if deletion fails
             }
-          } catch (deleteError) {
-            console.error("Error deleting old profile picture:", deleteError);
           }
-        }
-        
-        if (uploadResult) {
+          
           profilePictureUrl = uploadResult.fullUrl;
+          console.log("New client profile picture URL:", profilePictureUrl);
+        } else {
+          // If upload failed or returned no URL, keep the existing profile picture
+          console.log("No new profile picture uploaded, keeping existing one");
         }
       } catch (uploadError) {
         await session.abortTransaction();

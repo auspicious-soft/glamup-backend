@@ -37,7 +37,7 @@ const teamMemberSchema = new mongoose.Schema(
     },
     profilePicture: {
       type: String,
-      default: "https://example.com/default-profile.png",
+      default: "https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/DummyTeamMemberPic.png",
     },
     birthday: {
       type: Date,

@@ -92,7 +92,7 @@ const userSchema = new mongoose.Schema({
     // Profile & Preferences
     profilePic: {
       type: String,
-      default: "https://example.com/default-avatar.png",
+      default: "https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/dummyUserPic.png",
     },
     languages: {
       type: [String],

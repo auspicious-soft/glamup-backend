@@ -50,7 +50,7 @@ const userBusinessProfileSchema = new mongoose.Schema(
     },
     businessProfilePic: {
       type: String,
-      default: "https://example.com/default-business.png",
+      default: "https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/DummyBusinessProfilePic.png",
     },
     PhoneNumber: {
       type: String,

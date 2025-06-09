@@ -81,7 +81,7 @@ const clientSchema = new mongoose.Schema(
     },
     profilePicture: {
       type: String,
-      default: "https://example.com/default-client.png",
+      default: "https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/dummyClientPicture.png",
     },
     birthday: {
       type: Date,

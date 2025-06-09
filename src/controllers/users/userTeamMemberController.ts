@@ -20,7 +20,7 @@ import {
 } from "../../utils/user/usercontrollerUtils";
 import { Readable } from "stream";
 import Busboy from "busboy";
-import {  createS3Client, uploadStreamToS3ofTeamMember, getS3FullUrl } from "../../config/s3";
+import {  createS3Client, uploadStreamToS3ofTeamMember, getS3FullUrl, AWS_BUCKET_NAME } from "../../config/s3";
 import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 
 
@@ -106,28 +106,14 @@ export const createTeamMember = async (req: Request, res: Response) => {
         const uploadResult = await uploadProfilePictureToS3(req, businessEmail);
         if (uploadResult) {
           profilePictureUrl = uploadResult;
-        } else {
-          await session.abortTransaction();
-          session.endSession();
-          return errorResponseHandler(
-            "Unable to process profile image. Please try again with a different image or format.",
-            httpStatusCode.BAD_REQUEST,
-            res
-          );
         }
       } catch (uploadError) {
-        await session.abortTransaction();
-        session.endSession();
-        return errorResponseHandler(
-          "Unable to process profile image. Please try again with a different image or format.",
-          httpStatusCode.BAD_REQUEST,
-          res
-        );
+        console.error("Error uploading profile picture:", uploadError);
       }
     }
 
     const { name, email, phoneNumber, countryCode, gender, birthday, countryCallingCode } = req.body;
-    
+
     if (!name || !email || !countryCallingCode) {
       await session.abortTransaction();
       session.endSession();
@@ -173,7 +159,7 @@ export const createTeamMember = async (req: Request, res: Response) => {
           birthday,
           businessId: businessId,
           userId: userId,
-          profilePicture: profilePictureUrl || "https://example.com/default-profile.png",
+          profilePicture: profilePictureUrl || "https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/DummyTeamMemberPic.png" ,
         },
       ],
       { session }
@@ -325,8 +311,8 @@ export const updateTeamMember = async (req: Request, res: Response) => {
       );
     }
 
-    // Handle profile picture upload if it's a multipart request
     let profilePictureUrl = existingTeamMember.profilePicture;
+    let isDummyImage = profilePictureUrl.includes("DummyTeamMemberPic.png");
     
     if (req.headers["content-type"]?.includes("multipart/form-data")) {
       try {
@@ -334,12 +320,34 @@ export const updateTeamMember = async (req: Request, res: Response) => {
         
         // Upload new profile picture
         const uploadResult = await uploadProfilePictureToS3(req, businessEmail);
-        
-        // Update profile picture URL if new one was uploaded
         if (uploadResult) {
+          // If it's not a dummy image, we should delete the old one from S3
+          if (!isDummyImage) {
+            try {
+              const s3Client = createS3Client();
+              // Extract the key from the full URL
+              const oldKey = profilePictureUrl.split('amazonaws.com/')[1];
+              
+              if (oldKey) {
+                const deleteParams = {
+                  Bucket: AWS_BUCKET_NAME,
+                  Key: oldKey
+                };
+                
+                await s3Client.send(new DeleteObjectCommand(deleteParams));
+                console.log("Successfully deleted old profile picture:", oldKey);
+              }
+            } catch (deleteError) {
+              console.error("Error deleting old profile picture:", deleteError);
+              // Continue with the update even if deletion fails
+            }
+          }
+          
           profilePictureUrl = uploadResult;
+          console.log("New profile picture URL:", profilePictureUrl);
         }
       } catch (uploadError) {
+        console.error("Profile picture upload error:", uploadError);
         await session.abortTransaction();
         session.endSession();
         return errorResponseHandler(
