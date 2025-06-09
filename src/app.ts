@@ -16,7 +16,7 @@ const __dirname = path.dirname(__filename)
 const PORT = process.env.PORT || 8000
 const app = express()
 
-app.use(express.json());
+app.use(express.json({limit: '50mb'}));
 app.set("trust proxy", true)
 app.use(bodyParser.json({
   verify: (req: any, res, buf) => {
@@ -24,7 +24,7 @@ app.use(bodyParser.json({
   }
 }));
 app.use(cookieParser());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 
 app.use(
