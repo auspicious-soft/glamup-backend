@@ -20,6 +20,8 @@ import { Readable } from "stream";
 import Busboy from "busboy";
 import { uploadStreamToS3ofUser, getS3FullUrl } from "../../config/s3";
 import mongoose from "mongoose";
+import RegisteredTeamMember from "../../models/registeredTeamMember/registeredTeamMemberSchema";
+import UserBusinessProfile from "../../models/business/userBusinessProfileSchema";
 
 // Helper function to handle file upload to S3
 const uploadProfilePictureToS3 = async (req: Request): Promise<{ key: string, fullUrl: string } | null> => {
@@ -549,3 +551,143 @@ export const userLogout = async (req: Request, res: Response) => {
   }
 };
 
+
+export const joinExistingBusiness = async (req: Request, res: Response) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  
+  try {
+    const { businessId, userId } = req.body;
+    
+    if (!businessId || !userId) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Business ID and User ID are required",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+    
+    // Validate business ID
+    if (!mongoose.Types.ObjectId.isValid(businessId)) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Invalid business ID format",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+    
+    // Validate user ID
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Invalid user ID format",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+    
+    // Check if business exists
+    const business = await UserBusinessProfile.findOne({
+      _id: businessId,
+      isDeleted: false,
+      status: "active"
+    }).session(session);
+    
+    if (!business) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Business not found or inactive",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+    
+    // Check if user exists
+    const user = await User.findOne({
+      _id: userId,
+      isDeleted: false,
+      isActive: true
+    }).session(session);
+    
+    if (!user) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "User not found or inactive",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+    
+    // Check if user is already a team member of this business
+    const existingTeamMember = await RegisteredTeamMember.findOne({
+      userId: userId,
+      businessId: businessId,
+      isDeleted: false
+    }).session(session);
+    
+    if (existingTeamMember) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "User is already a team member of this business",
+        httpStatusCode.CONFLICT,
+        res
+      );
+    }
+    
+    // Create new registered team member
+    const newTeamMember = await RegisteredTeamMember.create(
+      [{
+        fullName: user.fullName,
+        email: user.email,
+        phoneNumber: user.phoneNumber || "",
+        countryCode: user.countryCode || "+91",
+        countryCallingCode: user.countryCallingCode || "IN",
+        password: user.password,
+        profilePic: user.profilePic || "https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/DummyTeamMemberPic.png",
+        businessId: businessId,
+        userId: userId,
+        isVerified: user.isVerified,
+        verificationMethod: user.verificationMethod || "email",
+      }],
+      { session }
+    );
+    
+    // Update user's business role to team-member
+    await User.findByIdAndUpdate(
+      userId,
+      { businessRole: "team-member" },
+      { session }
+    );
+    
+    await session.commitTransaction();
+    session.endSession();
+    
+    // Remove sensitive data before sending response
+    const { password, ...teamMemberResponse } = newTeamMember[0].toObject();
+    
+    return successResponse(
+      res,
+      "Successfully joined business as team member",
+      { teamMember: teamMemberResponse },
+      httpStatusCode.CREATED
+    );
+  } catch (error: any) {
+    await session.abortTransaction();
+    session.endSession();
+    console.error("Join business error:", error);
+    const parsedError = errorParser(error);
+    return errorResponseHandler(
+      parsedError.message,
+      parsedError.code,
+      res
+    );
+  }
+}

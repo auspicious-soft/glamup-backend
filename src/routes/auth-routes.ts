@@ -6,7 +6,8 @@ import {
   ResetPassword, 
   verifyResetPasswordOTP, 
   updatePassword, 
-  userLogout
+  userLogout,
+  joinExistingBusiness
 } from '../controllers/auth/userAuthController';
 import { reactivateUserAccount } from 'controllers/users/userProfileController';
 import { clientSignUp } from 'controllers/auth/clientAuthController';
@@ -33,4 +34,6 @@ router.post('/user/profile/reactivate', reactivateUserAccount);
 router.post('/client/signup', clientSignUp);
 router.post('/client/profile/reactivate', reactivateClientAccount);
 
+
+router.post('/user/join-business', joinExistingBusiness);
 export default router;
