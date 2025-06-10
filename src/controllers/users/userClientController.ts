@@ -130,7 +130,7 @@ export const createClient = async (req: Request, res: Response) => {
       preferredTeamMembers,
     } = req.body;
 
-    if (!name || !email || !countryCallingCode) {
+    if (!name || !countryCallingCode) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
@@ -140,15 +140,16 @@ export const createClient = async (req: Request, res: Response) => {
       );
     }
 
-    if (!(await validateEmail(email, res, session))) return;
-
-    if (await checkDuplicateClientEmail("", email, businessId, res, session)) return;
+  if (email) {
+  if (!(await validateEmail(email, res, session))) return;
+  if (await checkDuplicateClientEmail("", email, businessId, res, session)) return;
+}
 
     const newClient = await Client.create(
       [
         {
           name,
-          email,
+          email: email ? email : "" ,
           phoneNumber: phoneNumber || "",
           countryCode: countryCode || "+91",
           countryCallingCode: countryCallingCode || "IN",
