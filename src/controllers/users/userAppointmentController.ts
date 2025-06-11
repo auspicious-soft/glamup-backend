@@ -147,6 +147,39 @@ export const createAppointment = async (req: Request, res: Response) => {
   
   finalClientId = (newClient[0] as any)._id.toString();
 }
+
+// Validate and parse serviceIds
+    let parsedServiceIds: string[] = [];
+    if (typeof serviceIds === 'string') {
+      // Split comma-separated string and trim whitespace
+      parsedServiceIds = serviceIds.split(',').map(id => id.trim()).filter(id => id);
+    } else if (Array.isArray(serviceIds)) {
+      parsedServiceIds = serviceIds.map(id => id.toString());
+    }
+
+    // Validate that serviceIds is not empty and contains valid ObjectIds
+    if (!parsedServiceIds.length) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "At least one service ID is required",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    // Validate each service ID
+    for (const id of parsedServiceIds) {
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          `Invalid service ID: ${id}`,
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
+    }
     
     // Validate required fields for appointment
     if (!finalClientId || !teamMemberId || !startDate || !startTime || !serviceIds || 

@@ -557,13 +557,33 @@ export const joinExistingBusiness = async (req: Request, res: Response) => {
   session.startTransaction();
   
   try {
-    const { businessId, userId } = req.body;
+    const { businessId } = req.body;
     
-    if (!businessId || !userId) {
+    // Get userId from the token instead of request body
+    let userId: string | undefined;
+    if (typeof req.user === 'string') {
+      userId = req.user;
+    } else if (req.user && typeof req.user === 'object' && 'id' in req.user) {
+      userId = (req.user as any).id;
+    } else if (req.user && typeof req.user === 'object' && '_id' in req.user) {
+      userId = (req.user as any)._id.toString();
+    }
+    
+    if (!userId) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
-        "Business ID and User ID are required",
+        "User authentication failed",
+        httpStatusCode.UNAUTHORIZED,
+        res
+      );
+    }
+    
+    if (!businessId) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Business ID is required",
         httpStatusCode.BAD_REQUEST,
         res
       );
@@ -575,17 +595,6 @@ export const joinExistingBusiness = async (req: Request, res: Response) => {
       session.endSession();
       return errorResponseHandler(
         "Invalid business ID format",
-        httpStatusCode.BAD_REQUEST,
-        res
-      );
-    }
-    
-    // Validate user ID
-    if (!mongoose.Types.ObjectId.isValid(userId)) {
-      await session.abortTransaction();
-      session.endSession();
-      return errorResponseHandler(
-        "Invalid user ID format",
         httpStatusCode.BAD_REQUEST,
         res
       );

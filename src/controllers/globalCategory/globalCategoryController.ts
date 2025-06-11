@@ -266,11 +266,23 @@ export const deleteGlobalCategory = async (req: Request, res: Response) => {
 // Get businesses by global category IDs
 export const getBusinessesByGlobalCategory = async (req: Request, res: Response) => {
   try {
-    const { categoryIds } = req.body;
+    // Get categoryIds from query parameters
+    const categoryIdsParam = req.query.categoryIds as string;
     
-    if (!categoryIds || !Array.isArray(categoryIds) || categoryIds.length === 0) {
+    if (!categoryIdsParam) {
       return errorResponseHandler(
-        "Please provide an array of global category IDs",
+        "Please provide categoryIds as a query parameter",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+    
+    // Parse the comma-separated string into an array
+    const categoryIds = categoryIdsParam.split(',');
+    
+    if (categoryIds.length === 0) {
+      return errorResponseHandler(
+        "Please provide at least one category ID",
         httpStatusCode.BAD_REQUEST,
         res
       );
@@ -300,7 +312,7 @@ export const getBusinessesByGlobalCategory = async (req: Request, res: Response)
     }
     
     const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 10;
+    const limit = parseInt(req.query.limit as string) || 100;
     const skip = (page - 1) * limit;
     
     const query = {
@@ -354,3 +366,5 @@ export const getBusinessesByGlobalCategory = async (req: Request, res: Response)
     );
   }
 };
+
+

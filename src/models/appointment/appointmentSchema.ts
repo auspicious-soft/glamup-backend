@@ -75,7 +75,8 @@ const appointmentSchema = new mongoose.Schema(
     },
     clientEmail: {
       type: String,
-      required: true,
+      // required: true,
+      default:"",
     },
     clientPhone: {
       type: String,

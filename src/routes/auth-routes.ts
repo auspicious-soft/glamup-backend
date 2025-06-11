@@ -35,5 +35,5 @@ router.post('/client/signup', clientSignUp);
 router.post('/client/profile/reactivate', reactivateClientAccount);
 
 
-router.post('/user/join-business', joinExistingBusiness);
+router.post('/user/join-business', authMiddleware, joinExistingBusiness);
 export default router;
