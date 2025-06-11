@@ -5,7 +5,8 @@ import { errorResponseHandler } from "../../lib/errors/error-response-handler";
 import UserBusinessProfile from "../../models/business/userBusinessProfileSchema";
 import Service from "../../models/services/servicesSchema";
 import { errorParser } from "../../lib/errors/error-response-handler";
-import Category from "models/category/categorySchema";
+import Category from "../../models/category/categorySchema";
+import RegisteredTeamMember from "../../models/registeredTeamMember/registeredTeamMemberSchema";
 /**
  * Extracts user ID from request object
  */
@@ -320,6 +321,55 @@ export const validateBusinessForClient = async (
   res: Response,
   session?: mongoose.ClientSession
 ): Promise<mongoose.Types.ObjectId | null> => {
+  // Get user from database to check role
+  const user = session
+    ? await mongoose.model('User').findById(userId).session(session)
+    : await mongoose.model('User').findById(userId);
+  
+  if (!user) {
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
+    errorResponseHandler(
+      "User not found",
+      httpStatusCode.NOT_FOUND,
+      res
+    );
+    return null;
+  }
+  
+  // If user is a team member, get the business ID from team membership
+  if (user.businessRole === "team-member") {
+    const teamMembership = session
+      ? await RegisteredTeamMember.findOne({
+          userId: userId,
+          isDeleted: false,
+          isActive: true
+        }).session(session)
+      : await RegisteredTeamMember.findOne({
+          userId: userId,
+          isDeleted: false,
+          isActive: true
+        });
+    
+    if (teamMembership && teamMembership.businessId) {
+      return teamMembership.businessId as mongoose.Types.ObjectId;
+    }
+    
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
+    errorResponseHandler(
+      "You don't have access to any business",
+      httpStatusCode.FORBIDDEN,
+      res
+    );
+    return null;
+  }
+  
+  // For business owners, use the existing logic
   const business = await findUserBusiness(userId, session);
   if (!business || !business._id) {
     if (session) {
@@ -333,7 +383,6 @@ export const validateBusinessForClient = async (
     );
     return null;
   }
-  
   return business._id as mongoose.Types.ObjectId;
 };
 
@@ -344,16 +393,19 @@ export const buildClientSearchQuery = (
   businessId: mongoose.Types.ObjectId,
   search?: string
 ): any => {
-  let query: any = { 
+  const query: any = {
     businessId: businessId,
-    isDeleted: false 
+    isDeleted: false
   };
-
+  
   if (search) {
+    const searchRegex = new RegExp(search, 'i');
     query.$or = [
-      { name: { $regex: search, $options: "i" } },
-      { email: { $regex: search, $options: "i" } },
-      { phoneNumber: { $regex: search, $options: "i" } },
+      { name: searchRegex },
+      { email: searchRegex },
+      { phoneNumber: searchRegex },
+      { 'address.city': searchRegex },
+      { tags: searchRegex }
     ];
   }
   
@@ -440,3 +492,289 @@ export const validateAndProcessCategories = async (
   }));
 };
 
+/**
+ * Finds business associated with user, including team memberships
+ */
+export const findUserBusinessWithTeamAccess = async (
+  userId: string,
+  session?: mongoose.ClientSession
+): Promise<any> => {
+  // First check if user owns a business
+  const ownedBusiness = session
+    ? await UserBusinessProfile.findOne({
+        ownerId: userId,
+        isDeleted: false,
+        status: "active"
+      }).session(session)
+    : await UserBusinessProfile.findOne({
+        ownerId: userId,
+        isDeleted: false,
+        status: "active"
+      });
+  
+  if (ownedBusiness) {
+    return ownedBusiness;
+  }
+  
+  // If not an owner, check if user is a team member
+  const teamMembership = session
+    ? await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true
+      }).session(session).populate('businessId')
+    : await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true
+      }).populate('businessId');
+  
+  if (teamMembership && teamMembership.businessId) {
+    return teamMembership.businessId;
+  }
+  
+  return null;
+};
+
+/**
+ * Gets business ID for team member operations, supporting team member access
+ */
+export const getBusinessIdForTeamMember = async (
+  userId: string,
+  res: Response,
+  session?: mongoose.ClientSession
+): Promise<mongoose.Types.ObjectId | null> => {
+  // Get user from database to check role
+  const user = session
+    ? await mongoose.model('User').findById(userId).session(session)
+    : await mongoose.model('User').findById(userId);
+  
+  if (!user) {
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
+    errorResponseHandler(
+      "User not found",
+      httpStatusCode.NOT_FOUND,
+      res
+    );
+    return null;
+  }
+  
+  // If user is a team member, get the business ID from team membership
+  if (user.businessRole === "team-member") {
+    const teamMembership = session
+      ? await RegisteredTeamMember.findOne({
+          userId: userId,
+          isDeleted: false,
+          isActive: true
+        }).session(session)
+      : await RegisteredTeamMember.findOne({
+          userId: userId,
+          isDeleted: false,
+          isActive: true
+        });
+    
+    if (teamMembership && teamMembership.businessId) {
+      return teamMembership.businessId as mongoose.Types.ObjectId;
+    }
+    
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
+    errorResponseHandler(
+      "You don't have access to any business",
+      httpStatusCode.FORBIDDEN,
+      res
+    );
+    return null;
+  }
+  
+  // For business owners, use the existing logic
+  const business = await findUserBusiness(userId, session);
+  if (!business || !business._id) {
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
+    errorResponseHandler(
+      "You need to create a business profile first",
+      httpStatusCode.BAD_REQUEST,
+      res
+    );
+    return null;
+  }
+  return business._id as mongoose.Types.ObjectId;
+};
+
+/**
+ * Builds query for team member search, with team member access support
+ */
+export const buildTeamMemberSearchQuery = (
+  businessId: mongoose.Types.ObjectId,
+  search?: string
+): any => {
+  const query: any = {
+    businessId: businessId,
+    isDeleted: false
+  };
+  
+  if (search) {
+    query.$or = [
+      { name: { $regex: search, $options: "i" } },
+      { email: { $regex: search, $options: "i" } },
+      { phoneNumber: { $regex: search, $options: "i" } },
+      { specialization: { $regex: search, $options: "i" } },
+    ];
+  }
+  
+  return query;
+};
+
+/**
+ * Validates business profile access for both owners and team members
+ */
+export const validateBusinessProfileAccess = async (
+  userId: string,
+  profileId: string,
+  res: Response,
+  session?: mongoose.ClientSession
+): Promise<mongoose.Document | null> => {
+  // Get user to check role
+  const user = session
+    ? await mongoose.model('User').findById(userId).session(session)
+    : await mongoose.model('User').findById(userId);
+  
+  if (!user) {
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
+    errorResponseHandler(
+      "User not found",
+      httpStatusCode.NOT_FOUND,
+      res
+    );
+    return null;
+  }
+  
+  // Validate profileId is a valid ObjectId
+  if (!mongoose.Types.ObjectId.isValid(profileId)) {
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
+    errorResponseHandler(
+      "Invalid business profile ID format",
+      httpStatusCode.BAD_REQUEST,
+      res
+    );
+    return null;
+  }
+  
+  // Check if user is a business owner
+  if (user.businessRole === "owner") {
+    // For owners, only allow access to their own business
+    const businessProfile = session
+      ? await UserBusinessProfile.findOne({
+          _id: profileId,
+          ownerId: userId,
+          isDeleted: false,
+          status: "active",
+        }).session(session)
+      : await UserBusinessProfile.findOne({
+          _id: profileId,
+          ownerId: userId,
+          isDeleted: false,
+          status: "active",
+        });
+    
+    if (!businessProfile) {
+      if (session) {
+        await session.abortTransaction();
+        session.endSession();
+      }
+      errorResponseHandler(
+        "Business profile not found or you don't have permission to access it",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+      return null;
+    }
+    
+    return businessProfile;
+  } 
+  // Check if user is a team member
+  else if (user.businessRole === "team-member") {
+    // For team members, check if they belong to this business
+    const teamMembership = session
+      ? await RegisteredTeamMember.findOne({
+          userId: userId,
+          businessId: profileId,
+          isDeleted: false,
+          isActive: true
+        }).session(session)
+      : await RegisteredTeamMember.findOne({
+          userId: userId,
+          businessId: profileId,
+          isDeleted: false,
+          isActive: true
+        });
+    
+    if (!teamMembership) {
+      if (session) {
+        await session.abortTransaction();
+        session.endSession();
+      }
+      errorResponseHandler(
+        "You don't have access to this business profile",
+        httpStatusCode.FORBIDDEN,
+        res
+      );
+      return null;
+    }
+    
+    // Team member has access to this business, fetch the profile
+    const businessProfile = session
+      ? await UserBusinessProfile.findOne({
+          _id: profileId,
+          isDeleted: false,
+          status: "active",
+        }).session(session)
+      : await UserBusinessProfile.findOne({
+          _id: profileId,
+          isDeleted: false,
+          status: "active",
+        });
+    
+    if (!businessProfile) {
+      if (session) {
+        await session.abortTransaction();
+        session.endSession();
+      }
+      errorResponseHandler(
+        "Business profile not found or inactive",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+      return null;
+    }
+    
+    return businessProfile;
+  }
+  // User is neither an owner nor a team member
+  else {
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
+    errorResponseHandler(
+      "You don't have permission to access business profiles",
+      httpStatusCode.FORBIDDEN,
+      res
+    );
+    return null;
+  }
+};

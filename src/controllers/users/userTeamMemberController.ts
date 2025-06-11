@@ -7,6 +7,8 @@ import {
 } from "../../lib/errors/error-response-handler";
 import mongoose from "mongoose";
 import TeamMember from "../../models/team/teamMemberSchema";
+import User from "models/user/userSchema";
+import RegisteredTeamMember from "models/registeredTeamMember/registeredTeamMemberSchema";
 import {
   validateUserAuth,
   findUserBusiness,
@@ -17,6 +19,7 @@ import {
   startSession,
   handleTransactionError,
   checkDuplicateTeamMemberEmail,
+  buildTeamMemberSearchQuery,
 } from "../../utils/user/usercontrollerUtils";
 import { Readable } from "stream";
 import Busboy from "busboy";
@@ -184,31 +187,64 @@ export const getAllTeamMembers = async (req: Request, res: Response) => {
     const userId = await validateUserAuth(req, res);
     if (!userId) return;
 
+    // Get user to check role
+    const user = await User.findById(userId);
+    if (!user) {
+      return errorResponseHandler(
+        "User not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    let businessId: mongoose.Types.ObjectId | null = null;
+
+    // If user is a team member, get business ID from team membership
+    if (user.businessRole === "team-member") {
+      const teamMembership = await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true
+      });
+      
+      if (!teamMembership) {
+        return errorResponseHandler(
+          "You don't have access to any business",
+          httpStatusCode.FORBIDDEN,
+          res
+        );
+      }
+      
+      businessId = teamMembership.businessId as mongoose.Types.ObjectId;
+    } else {
+      // For business owners, use the existing logic
+      const business = await findUserBusiness(userId);
+      businessId = business ? (business._id as mongoose.Types.ObjectId) : null;
+      
+      if (!businessId) {
+        return errorResponseHandler(
+          "You need to create a business profile first",
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
+    }
+
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 10;
     const skip = (page - 1) * limit;
 
     const search = req.query.search as string;
 
-    const business: any = await findUserBusiness(userId);
-    const businessId = business ? business._id : null;
-
-    let query: any = { isDeleted: false };
-
-    if (businessId) {
-      query.businessId = businessId;
-    } else {
-      query.userId = userId;
+    if (!businessId) {
+      return errorResponseHandler(
+        "Business ID is required to fetch team members",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
     }
 
-    if (search) {
-      query.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
-        { phoneNumber: { $regex: search, $options: "i" } },
-        { specialization: { $regex: search, $options: "i" } },
-      ];
-    }
+    let query = buildTeamMemberSearchQuery(businessId, search);
 
     const totalTeamMembers = await TeamMember.countDocuments(query);
     const teamMembers = await TeamMember.find(query)
@@ -244,18 +280,52 @@ export const getTeamMemberById = async (req: Request, res: Response) => {
     const userId = await validateUserAuth(req, res);
     if (!userId) return;
 
+    // Get user to check role
+    const user = await User.findById(userId);
+    if (!user) {
+      return errorResponseHandler(
+        "User not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    let businessId;
+
+    // If user is a team member, get business ID from team membership
+    if (user.businessRole === "team-member") {
+      const teamMembership = await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true
+      });
+      
+      if (!teamMembership) {
+        return errorResponseHandler(
+          "You don't have access to any business",
+          httpStatusCode.FORBIDDEN,
+          res
+        );
+      }
+      
+      businessId = teamMembership.businessId;
+    } else {
+      // For business owners, use the existing logic
+      const business = await findUserBusiness(userId);
+      businessId = business ? business._id : null;
+    }
+
     const { memberId } = req.params;
 
     if (!(await validateObjectId(memberId, "Team member", res))) return;
 
-    const business = await findUserBusiness(userId);
-    const businessId = business ? business._id : null;
-
-    const query = buildTeamMemberQuery(
-      memberId,
-      userId,
-      businessId as mongoose.Types.ObjectId | null
-    );
+    // Build query to find the team member
+    const query = {
+      _id: memberId,
+      businessId: businessId,
+      isDeleted: false
+    };
+    
     const teamMember = await TeamMember.findOne(query);
 
     if (!teamMember) {

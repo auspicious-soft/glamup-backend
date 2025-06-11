@@ -9,6 +9,7 @@ import cookieParser from 'cookie-parser'
 import {admin, auth, client, globCategories, user} from "./routes"
 import { authMiddleware } from "middleware/authMiddleware"
 import { clientAuthMiddleware } from "middleware/clientAuthMiddleware"
+import { businessAccessMiddleware } from "middleware/businessAccessMiddleware"
 
 const __filename = fileURLToPath(import.meta.url) 
 const __dirname = path.dirname(__filename)      
@@ -60,7 +61,7 @@ connectDB();
 app.use('/api', auth);
 
 // Protected routes - require authentication
-app.use('/api/user',authMiddleware, user);
+app.use('/api/user',authMiddleware, businessAccessMiddleware, user);
 app.use('/api/admin', admin);
 app.use('/api/global-categories', globCategories);
 app.use("/api/client", clientAuthMiddleware, client);

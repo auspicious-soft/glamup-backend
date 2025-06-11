@@ -17,6 +17,55 @@ export const validateBusinessProfile = async (
   res: Response,
   session?: mongoose.ClientSession
 ): Promise<mongoose.Types.ObjectId | null> => {
+  // Get user to check role
+  const user = session
+    ? await mongoose.model('User').findById(userId).session(session)
+    : await mongoose.model('User').findById(userId);
+  
+  if (!user) {
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
+    errorResponseHandler(
+      "User not found",
+      httpStatusCode.NOT_FOUND,
+      res
+    );
+    return null;
+  }
+  
+  // If user is a team member, get the business ID from team membership
+  if (user.businessRole === "team-member") {
+    const teamMembership = session
+      ? await RegisteredTeamMember.findOne({
+          userId: userId,
+          isDeleted: false,
+          isActive: true
+        }).session(session)
+      : await RegisteredTeamMember.findOne({
+          userId: userId,
+          isDeleted: false,
+          isActive: true
+        });
+    
+    if (teamMembership && teamMembership.businessId) {
+      return teamMembership.businessId as mongoose.Types.ObjectId;
+    }
+    
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
+    errorResponseHandler(
+      "You don't have access to any business",
+      httpStatusCode.FORBIDDEN,
+      res
+    );
+    return null;
+  }
+  
+  // For business owners, use the original logic
   const businessProfile = session
     ? await UserBusinessProfile.findOne({
         ownerId: userId,
@@ -722,28 +771,42 @@ export const formatDateForResponse = (date: Date): string => {
 };
 
 // Prepares team member data for response
-export const prepareTeamMemberResponse = (teamMember: any): { id: any; name: string } => {
+export const prepareTeamMemberResponse = (teamMember: any): any => {
+  if (!teamMember) return null;
+  
   return {
-    id: teamMember._id,
-    name: teamMember.name
+    _id: teamMember._id,
+    name: teamMember.name,
+    email: teamMember.email,
+    phoneNumber: teamMember.phoneNumber,
+    specialization: teamMember.specialization,
+    isActive: teamMember.isActive
   };
 };
 // Prepares pagination metadata for response
 export const preparePaginationMetadata = (
   totalItems: number,
   pagination: { skip: number; limit: number; page: number },
-  items: any[]
+  filteredItems?: any[]
 ): {
-  count: number;
   totalItems: number;
   totalPages: number;
   currentPage: number;
+  limit: number;
+  hasNextPage: boolean;
+  hasPrevPage: boolean;
 } => {
+  // If filtered items are provided, use their length instead of total
+  const count = filteredItems ? filteredItems.length : totalItems;
+  const totalPages = Math.ceil(count / pagination.limit);
+  
   return {
-    count: items.length,
-    totalItems,
-    totalPages: Math.ceil(totalItems / pagination.limit),
-    currentPage: pagination.page
+    totalItems: count,
+    totalPages,
+    currentPage: pagination.page,
+    limit: pagination.limit,
+    hasNextPage: pagination.page < totalPages,
+    hasPrevPage: pagination.page > 1
   };
 };
 

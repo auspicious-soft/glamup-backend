@@ -10,6 +10,7 @@ import {
   startSession,
   handleTransactionError,
   validateObjectId,
+  validateUserAuth,
 } from "../../utils/user/usercontrollerUtils";
 import Category from "models/category/categorySchema";
 import {
@@ -22,6 +23,9 @@ import {
 } from "../../utils/user/categoryServiceUtils";
 import UserBusinessProfile from "models/business/userBusinessProfileSchema";
 import mongoose from "mongoose";
+import User from "models/user/userSchema";
+import RegisteredTeamMember from "models/registeredTeamMember/registeredTeamMemberSchema";
+import { validateBusinessProfile } from "utils/appointment/appointmentUtils";
 
 // Category functions
 export const createCategory = async (req: Request, res: Response) => {
@@ -74,8 +78,43 @@ export const createCategory = async (req: Request, res: Response) => {
 
 export const getAllCategories = async (req: Request, res: Response) => {
   try {
-    const businessId = await validateUserAndGetBusiness(req, res);
-    if (!businessId) return;
+    const userId = await validateUserAuth(req, res);
+    if (!userId) return;
+
+    // Get user to check role
+    const user = await User.findById(userId);
+    if (!user) {
+      return errorResponseHandler(
+        "User not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    let businessId;
+
+    // If user is a team member, get business ID from team membership
+    if (user.businessRole === "team-member") {
+      const teamMembership = await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true
+      });
+      
+      if (!teamMembership) {
+        return errorResponseHandler(
+          "You don't have access to any business",
+          httpStatusCode.FORBIDDEN,
+          res
+        );
+      }
+      
+      businessId = teamMembership.businessId;
+    } else {
+      // For business owners, use the existing function
+      businessId = await validateBusinessProfile(userId, res);
+      if (!businessId) return;
+    }
 
     const { page, limit, skip } = buildPaginationParams(req);
     const search = req.query.search as string;
@@ -117,28 +156,30 @@ export const getAllCategories = async (req: Request, res: Response) => {
       globalCategoryMap.set(gc._id.toString(), gc);
     });
     
-    // Format global categories with descriptions from the GlobalCategory collection
+    // Format global categories to match the structure of regular categories
     const formattedGlobalCategories = globalCategories.map(gc => {
-      const globalCatDetails = globalCategoryMap.get(gc.categoryId.toString());
+      const globalCat = globalCategoryMap.get(gc.categoryId.toString());
       return {
         _id: gc.categoryId,
         name: gc.name,
-        description: globalCatDetails?.description || "",
-        icon: globalCatDetails?.icon || "",
+        description: globalCat?.description || "",
+        icon: globalCat?.icon || "",
         businessId: businessId,
         isActive: gc.isActive,
         isDeleted: false,
         isGlobal: true
       };
     });
-
+    
+    // Combine regular and global categories
     const allCategories = [...categories, ...formattedGlobalCategories];
-
-    const pagination = createPaginationMetadata(totalCategories + formattedGlobalCategories.length, page, limit);
+    
+    // Create pagination metadata
+    const paginationMeta = createPaginationMetadata(page, limit, totalCategories);
 
     return successResponse(res, "Categories fetched successfully", {
       categories: allCategories,
-      pagination
+      pagination: paginationMeta
     });
   } catch (error: any) {
     console.error("Error fetching categories:", error);
@@ -152,8 +193,43 @@ export const getAllCategories = async (req: Request, res: Response) => {
 
 export const getCategoryById = async (req: Request, res: Response) => {
   try {
-    const businessId = await validateUserAndGetBusiness(req, res);
-    if (!businessId) return;
+    const userId = await validateUserAuth(req, res);
+    if (!userId) return;
+
+    // Get user to check role
+    const user = await User.findById(userId);
+    if (!user) {
+      return errorResponseHandler(
+        "User not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    let businessId;
+
+    // If user is a team member, get business ID from team membership
+    if (user.businessRole === "team-member") {
+      const teamMembership = await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true
+      });
+      
+      if (!teamMembership) {
+        return errorResponseHandler(
+          "You don't have access to any business",
+          httpStatusCode.FORBIDDEN,
+          res
+        );
+      }
+      
+      businessId = teamMembership.businessId;
+    } else {
+      // For business owners, use the existing function
+      businessId = await validateBusinessProfile(userId, res);
+      if (!businessId) return;
+    }
 
     const { categoryId } = req.params;
     
@@ -391,22 +467,42 @@ export const deleteCategories = async (req: Request, res: Response) => {
 
 export const getBusinessCategories = async (req: Request, res: Response) => {
   try {
-    const { businessId } = req.params;
+    const userId = await validateUserAuth(req, res);
+    if (!userId) return;
 
-    if (!(await validateObjectId(businessId, "Business", res))) return;
-
-    const business = await UserBusinessProfile.findOne({
-      _id: businessId,
-      status: "active",
-      isDeleted: false
-    });
-
-    if (!business) {
+    // Get user to check role
+    const user = await User.findById(userId);
+    if (!user) {
       return errorResponseHandler(
-        "Business profile not found or inactive",
+        "User not found",
         httpStatusCode.NOT_FOUND,
         res
       );
+    }
+
+    let businessId;
+
+    // If user is a team member, get business ID from team membership
+    if (user.businessRole === "team-member") {
+      const teamMembership = await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true
+      });
+      
+      if (!teamMembership) {
+        return errorResponseHandler(
+          "You don't have access to any business",
+          httpStatusCode.FORBIDDEN,
+          res
+        );
+      }
+      
+      businessId = teamMembership.businessId;
+    } else {
+      // For business owners, use the existing function
+      businessId = await validateBusinessProfile(userId, res);
+      if (!businessId) return;
     }
 
     // Only fetch active categories
@@ -416,8 +512,13 @@ export const getBusinessCategories = async (req: Request, res: Response) => {
       isDeleted: false
     }).sort({ name: 1 });
     
+    const businessProfile = await UserBusinessProfile.findOne({
+      _id: businessId,
+      isDeleted: false
+    });
+    
     // Only include active global categories
-    const globalCategories = business.selectedCategories?.filter(gc => gc.isActive) || [];
+    const globalCategories = businessProfile?.selectedCategories?.filter(gc => gc.isActive) || [];
     
     const formattedGlobalCategories = globalCategories.map(gc => ({
       _id: gc.categoryId,

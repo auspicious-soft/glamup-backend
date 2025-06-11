@@ -17,6 +17,7 @@ import {
   validateAndProcessCategories,
   startSession,
   handleTransactionError,
+  validateBusinessProfileAccess,
 } from "../../utils/user/usercontrollerUtils";
 import User from "../../models/user/userSchema";
 import GlobalCategory from "../../models/globalCategory/globalCategorySchema";
@@ -29,6 +30,7 @@ import {
   AWS_BUCKET_NAME 
 } from "../../config/s3";
 import { DeleteObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import RegisteredTeamMember from "models/registeredTeamMember/registeredTeamMemberSchema";
 
 const validateAndProcessGlobalCategories = async (
   categoryIds: string[],
@@ -464,20 +466,9 @@ export const getBusinessProfileById = async (req: Request, res: Response) => {
 
     if (!(await validateObjectId(profileId, "Business profile", res))) return;
 
-    const businessProfile = await UserBusinessProfile.findOne({
-      _id: profileId,
-      ownerId: userId,
-      isDeleted: false,
-      status: "active",
-    });
-
-    if (!businessProfile) {
-      return errorResponseHandler(
-        "Business profile not found or you don't have permission to access it",
-        httpStatusCode.NOT_FOUND,
-        res
-      );
-    }
+    // Use the helper function to validate access and get the business profile
+    const businessProfile = await validateBusinessProfileAccess(userId, profileId, res);
+    if (!businessProfile) return;
 
     return successResponse(res, "Business profile fetched successfully", {
       businessProfile,

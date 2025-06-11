@@ -10,6 +10,7 @@ import {
   startSession,
   handleTransactionError,
   validateObjectId,
+  validateUserAuth,
 } from "../../utils/user/usercontrollerUtils";
 import Category from "models/category/categorySchema";
 import {
@@ -25,6 +26,8 @@ import {
 import UserBusinessProfile from "models/business/userBusinessProfileSchema";
 import mongoose from "mongoose";
 import TeamMember from "models/team/teamMemberSchema";
+import User from "models/user/userSchema";
+import RegisteredTeamMember from "models/registeredTeamMember/registeredTeamMemberSchema";
 // import UserBusinessProfile from "../../models/userBusinessProfile/userBusinessProfileSchema";
 // import { validateObjectId } from "../../utils/user/userUtils";
 
@@ -185,70 +188,102 @@ export const createService = async (req: Request, res: Response) => {
 
 export const getAllServices = async (req: Request, res: Response) => {
   try {
-    const businessId = await validateUserAndGetBusiness(req, res);
-    if (!businessId) return;
+    const userId = await validateUserAuth(req, res);
+    if (!userId) return;
+
+    // Get user to check role
+    const user = await User.findById(userId);
+    if (!user) {
+      return errorResponseHandler(
+        "User not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    let businessId;
+
+    // If user is a team member, get business ID from team membership
+    if (user.businessRole === "team-member") {
+      const teamMembership = await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true
+      });
+      
+      if (!teamMembership) {
+        return errorResponseHandler(
+          "You don't have access to any business",
+          httpStatusCode.FORBIDDEN,
+          res
+        );
+      }
+      
+      businessId = teamMembership.businessId;
+    } else {
+      // For business owners, use the existing function
+      businessId = await validateUserAndGetBusiness(req, res);
+      if (!businessId) return;
+    }
 
     const { page, limit, skip } = buildPaginationParams(req);
     const search = req.query.search as string;
     const categoryId = req.query.categoryId as string;
-    const isGlobalOnly = req.query.isGlobalOnly === 'true';
-
-    // Build base query - add isActive: true to only show active services
-    let query: any = {
-      businessId: businessId,
-      isDeleted: false,
-      isActive: true
-    };
     
-    // Add search conditions if provided
-    if (search) {
-      query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } },
-        { categoryName: { $regex: search, $options: 'i' } },
-        { tags: { $in: [new RegExp(search, 'i')] } }
-      ];
-    }
+    const query = buildServiceSearchQuery(businessId, search, categoryId);
     
-    // Filter by category if provided
-    if (categoryId) {
-      query.categoryId = categoryId;
-    }
-    
-    // Filter by global category flag if requested
-    if (isGlobalOnly) {
-      query.isGlobalCategory = true;
-    }
-
-    console.log("Service query:", JSON.stringify(query, null, 2));
-
-    // First, check if there are any global category services
-    const globalCategoryServices = await Service.find({
-      businessId: businessId,
-      isGlobalCategory: true,
-      isDeleted: false,
-      isActive: true // Only show active services
-    });
-    
-    console.log("Global category services count:", globalCategoryServices.length);
-    if (globalCategoryServices.length > 0) {
-      console.log("Sample global service:", globalCategoryServices[0]);
-    }
-
     const totalServices = await Service.countDocuments(query);
     
     const services = await Service.find(query)
       .sort({ name: 1 })
       .skip(skip)
       .limit(limit);
-
-    console.log("Total services found:", services.length);
-
-    const pagination = createPaginationMetadata(totalServices, page, limit);
+    
+    // Get all team members for this business with only the needed fields
+    const allTeamMembers = await TeamMember.find(
+      {
+        businessId: businessId,
+        isDeleted: false
+      },
+      {
+        name: 1,
+        email: 1,
+        phoneNumber: 1,
+        countryCode: 1,
+        countryCallingCode: 1,
+        profilePicture: 1,
+        gender: 1,
+        specialization: 1,
+        role: 1
+      }
+    );
+    
+    // Create a map for quick team member lookup
+    const teamMemberMap = new Map();
+    allTeamMembers.forEach(member => {
+      teamMemberMap.set(member._id.toString(), member);
+    });
+    
+    // Enhance services with team member details
+    const enhancedServices = services.map(service => {
+      const enhancedService = service.toObject();
+      
+      if (service.teamMembers && service.teamMembers.length > 0) {
+        enhancedService.teamMembers = service.teamMembers.map(member => ({
+          memberId: member.memberId,
+          name: member.name || ""
+        }));
+      }
+      
+      return enhancedService;
+    });
+    
+    // Create pagination metadata
+    const paginationMeta = createPaginationMetadata(page, limit, totalServices);
 
     return successResponse(res, "Services fetched successfully", {
-      services,
-      pagination
+      services: enhancedServices,
+      pagination: paginationMeta
     });
   } catch (error: any) {
     console.error("Error fetching services:", error);
@@ -262,8 +297,43 @@ export const getAllServices = async (req: Request, res: Response) => {
 
 export const getServiceById = async (req: Request, res: Response) => {
   try {
-    const businessId = await validateUserAndGetBusiness(req, res);
-    if (!businessId) return;
+    const userId = await validateUserAuth(req, res);
+    if (!userId) return;
+
+    // Get user to check role
+    const user = await User.findById(userId);
+    if (!user) {
+      return errorResponseHandler(
+        "User not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    let businessId;
+
+    // If user is a team member, get business ID from team membership
+    if (user.businessRole === "team-member") {
+      const teamMembership = await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true
+      });
+      
+      if (!teamMembership) {
+        return errorResponseHandler(
+          "You don't have access to any business",
+          httpStatusCode.FORBIDDEN,
+          res
+        );
+      }
+      
+      businessId = teamMembership.businessId;
+    } else {
+      // For business owners, use the existing function
+      businessId = await validateUserAndGetBusiness(req, res);
+      if (!businessId) return;
+    }
 
     const { serviceId } = req.params;
     
@@ -318,29 +388,15 @@ export const getServiceById = async (req: Request, res: Response) => {
         teamMemberMap.set(member._id.toString(), member);
       });
       
-      // Enhance team members in the service
-      enhancedService.teamMembers = enhancedService.teamMembers.map(member => {
-        const memberData = teamMemberMap.get(member.memberId.toString());
-        if (memberData) {
-          // Return only essential team member details
-          return {
-            memberId: memberData._id,
-            name: memberData.name,
-            email: memberData.email,
-            phoneNumber: memberData.phoneNumber || "",
-            countryCode: memberData.countryCode || "",
-            countryCallingCode: memberData.countryCallingCode || "",
-            profilePicture: memberData.profilePicture || "",
-            gender: memberData.gender || "",
-            specialization: memberData.specialization || "",
-            role: memberData.role || "staff"
-          };
-        }
-        return member; // Fallback to original data if member not found
-      });
+      // Replace team member IDs with only memberId and name to match TeamMemberService interface
+      enhancedService.teamMembers = service.teamMembers.map(member => ({
+        memberId: member.memberId,
+        name: member.name || ""
+      }));
     }
-
-    return successResponse(res, "Service fetched successfully", { service: enhancedService });
+    return successResponse(res, "Service fetched successfully", {
+      service: enhancedService
+    });
   } catch (error: any) {
     console.error("Error fetching service:", error);
     const parsedError = errorParser(error);

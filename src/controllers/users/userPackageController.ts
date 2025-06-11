@@ -11,6 +11,7 @@ import {
   validateObjectId,
   startSession,
   handleTransactionError,
+  validateUserAuth,
 } from "../../utils/user/usercontrollerUtils";
 import Package from "../../models/package/packageSchema";
 import {
@@ -22,6 +23,8 @@ import {
   validatePackageServices
 } from "../../utils/user/categoryServiceUtils";
 import UserBusinessProfile from "../../models/business/userBusinessProfileSchema";
+import User from "../../models/user/userSchema";
+import RegisteredTeamMember from "../../models/registeredTeamMember/registeredTeamMemberSchema";
 
 // Define the type for services used in packages
 interface ServiceForPackage {
@@ -265,8 +268,43 @@ export const createPackage = async (req: Request, res: Response) => {
 
 export const getAllPackages = async (req: Request, res: Response) => {
   try {
-    const businessId = await validateUserAndGetBusiness(req, res);
-    if (!businessId) return;
+    const userId = await validateUserAuth(req, res);
+    if (!userId) return;
+
+    // Get user to check role
+    const user = await User.findById(userId);
+    if (!user) {
+      return errorResponseHandler(
+        "User not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    let businessId;
+
+    // If user is a team member, get business ID from team membership
+    if (user.businessRole === "team-member") {
+      const teamMembership = await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true
+      });
+      
+      if (!teamMembership) {
+        return errorResponseHandler(
+          "You don't have access to any business",
+          httpStatusCode.FORBIDDEN,
+          res
+        );
+      }
+      
+      businessId = teamMembership.businessId;
+    } else {
+      // For business owners, use the existing function
+      businessId = await validateUserAndGetBusiness(req, res);
+      if (!businessId) return;
+    }
 
     const { page, limit, skip } = buildPaginationParams(req);
     const search = req.query.search as string;
@@ -290,17 +328,16 @@ export const getAllPackages = async (req: Request, res: Response) => {
     }
 
     const totalPackages = await Package.countDocuments(query);
-    
     const packages = await Package.find(query)
-      .sort({ name: 1 })
+      .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit);
 
-    const pagination = createPaginationMetadata(totalPackages, page, limit);
+    const paginationMeta = createPaginationMetadata(page, limit, totalPackages);
 
     return successResponse(res, "Packages fetched successfully", {
       packages,
-      pagination
+      pagination: paginationMeta
     });
   } catch (error: any) {
     console.error("Error fetching packages:", error);
@@ -314,8 +351,43 @@ export const getAllPackages = async (req: Request, res: Response) => {
 
 export const getPackageById = async (req: Request, res: Response) => {
   try {
-    const businessId = await validateUserAndGetBusiness(req, res);
-    if (!businessId) return;
+    const userId = await validateUserAuth(req, res);
+    if (!userId) return;
+
+    // Get user to check role
+    const user = await User.findById(userId);
+    if (!user) {
+      return errorResponseHandler(
+        "User not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    let businessId;
+
+    // If user is a team member, get business ID from team membership
+    if (user.businessRole === "team-member") {
+      const teamMembership = await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true
+      });
+      
+      if (!teamMembership) {
+        return errorResponseHandler(
+          "You don't have access to any business",
+          httpStatusCode.FORBIDDEN,
+          res
+        );
+      }
+      
+      businessId = teamMembership.businessId;
+    } else {
+      // For business owners, use the existing function
+      businessId = await validateUserAndGetBusiness(req, res);
+      if (!businessId) return;
+    }
 
     const { packageId } = req.params;
     

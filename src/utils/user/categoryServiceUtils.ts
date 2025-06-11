@@ -6,16 +6,99 @@ import Category from "../../models/category/categorySchema";
 import Service from "../../models/services/servicesSchema";
 import TeamMember from "../../models/team/teamMemberSchema";
 import Package from "../../models/package/packageSchema";
+import RegisteredTeamMember from "../../models/registeredTeamMember/registeredTeamMemberSchema";
 import { findUserBusiness, validateObjectId, validateUserAuth } from "./usercontrollerUtils";
 
 /**
- * Validates business profile existence and returns business ID
+ * Gets business ID for a user, including team memberships
+ */
+export const getBusinessIdForUser = async (
+  userId: string,
+  session?: mongoose.ClientSession
+): Promise<mongoose.Types.ObjectId | null> => {
+  // First check if user owns a business
+  const business = await findUserBusiness(userId, session);
+  if (business && business._id) {
+    return business._id as mongoose.Types.ObjectId;
+  }
+  
+  // If not an owner, check if user is a team member
+  const teamMembership = session
+    ? await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true
+      }).session(session)
+    : await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true
+      });
+  
+  if (teamMembership && teamMembership.businessId) {
+    return teamMembership.businessId as mongoose.Types.ObjectId;
+  }
+  
+  return null;
+};
+
+/**
+ * Validates business profile existence and returns business ID, with team member support
  */
 export const validateBusinessProfile = async (
   userId: string,
   res: Response,
   session?: mongoose.ClientSession
 ): Promise<mongoose.Types.ObjectId | null> => {
+  // Get user from database to check role
+  const user = session
+    ? await mongoose.model('User').findById(userId).session(session)
+    : await mongoose.model('User').findById(userId);
+  
+  if (!user) {
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
+    errorResponseHandler(
+      "User not found",
+      httpStatusCode.NOT_FOUND,
+      res
+    );
+    return null;
+  }
+  
+  // If user is a team member, get the business ID from team membership
+  if (user.businessRole === "team-member") {
+    const teamMembership = session
+      ? await RegisteredTeamMember.findOne({
+          userId: userId,
+          isDeleted: false,
+          isActive: true
+        }).session(session)
+      : await RegisteredTeamMember.findOne({
+          userId: userId,
+          isDeleted: false,
+          isActive: true
+        });
+    
+    if (teamMembership && teamMembership.businessId) {
+      return teamMembership.businessId as mongoose.Types.ObjectId;
+    }
+    
+    if (session) {
+      await session.abortTransaction();
+      session.endSession();
+    }
+    errorResponseHandler(
+      "You don't have access to any business",
+      httpStatusCode.FORBIDDEN,
+      res
+    );
+    return null;
+  }
+  
+  // For business owners, use the existing logic
   const business = await findUserBusiness(userId, session);
   if (!business || !business._id) {
     if (session) {
@@ -258,7 +341,7 @@ export const buildCategorySearchQuery = (
 };
 
 /**
- * Common function to validate user and get business ID
+ * Common function to validate user and get business ID, with team member support
  */
 export const validateUserAndGetBusiness = async (
   req: Request,
@@ -268,6 +351,36 @@ export const validateUserAndGetBusiness = async (
   const userId = await validateUserAuth(req, res, session);
   if (!userId) return null;
   
+  // Get user role from request
+  const userRole = (req.user as any)?.businessRole || "";
+  
+  // If user is a team member, get the business ID from team membership
+  if (userRole === "team-member") {
+    const teamMembership = session
+      ? await RegisteredTeamMember.findOne({
+          userId: userId,
+          isDeleted: false,
+          isActive: true
+        }).session(session)
+      : await RegisteredTeamMember.findOne({
+          userId: userId,
+          isDeleted: false,
+          isActive: true
+        });
+    
+    if (teamMembership && teamMembership.businessId) {
+      return teamMembership.businessId as mongoose.Types.ObjectId;
+    }
+    
+    errorResponseHandler(
+      "You don't have access to any business",
+      httpStatusCode.FORBIDDEN,
+      res
+    );
+    return null;
+  }
+  
+  // For business owners, use the existing function
   return await validateBusinessProfile(userId, res, session);
 };
 
@@ -299,7 +412,7 @@ export const createPaginationMetadata = (totalItems: number, page: number, limit
 };
 
 /**
- * Validates package existence and ownership
+ * Validates package access, with team member support
  */
 export const validatePackageAccess = async (
   packageId: string,
@@ -338,7 +451,7 @@ export const validatePackageAccess = async (
 };
 
 /**
- * Validates services for a package
+ * Validates package services, with team member support
  */
 export const validatePackageServices = async (
   services: any[],
@@ -362,6 +475,23 @@ export const validatePackageServices = async (
 
   const serviceIds = services.map(service => service.serviceId);
   
+  // Validate all service IDs are valid ObjectIds
+  for (const serviceId of serviceIds) {
+    if (!mongoose.Types.ObjectId.isValid(serviceId)) {
+      if (session) {
+        await session.abortTransaction();
+        session.endSession();
+      }
+      errorResponseHandler(
+        `Invalid service ID format: ${serviceId}`,
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+      return null;
+    }
+  }
+  
+  // Find services that belong to the specified category and business
   const existingServices = session
     ? await Service.find({
         _id: { $in: serviceIds },
@@ -375,20 +505,24 @@ export const validatePackageServices = async (
         businessId: businessId,
         isDeleted: false
       });
-
+  
   if (existingServices.length !== serviceIds.length) {
+    // Find which service IDs are missing or invalid
+    const foundServiceIds = existingServices.map(service => (service._id as mongoose.Types.ObjectId).toString());
+    const missingServiceIds = serviceIds.filter(id => !foundServiceIds.includes(id));
+    
     if (session) {
       await session.abortTransaction();
       session.endSession();
     }
     errorResponseHandler(
-      "One or more services do not exist, don't belong to the selected category, or don't belong to your business",
+      `The following services were not found or don't belong to the specified category: ${missingServiceIds.join(', ')}`,
       httpStatusCode.BAD_REQUEST,
       res
     );
     return null;
   }
-
+  
   // Process services with their details
   return services.map(service => {
     const existingService = existingServices.find(
@@ -444,6 +578,8 @@ export const processServiceTags = (tags: any[]): string[] => {
     .filter(tag => typeof tag === 'string' && tag.trim() !== '')
     .map(tag => tag.trim());
 };
+
+
 
 
 

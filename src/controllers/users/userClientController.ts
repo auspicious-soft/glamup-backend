@@ -24,6 +24,8 @@ import Busboy from "busboy";
 import { createS3Client, uploadStreamToS3ofClient, getS3FullUrl } from "../../config/s3";
 import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 import mongoose from "mongoose";
+import RegisteredTeamMember from "models/registeredTeamMember/registeredTeamMemberSchema";
+import User from "models/user/userSchema";
 
 // Helper function to handle file upload to S3
 const uploadProfilePictureToS3 = async (req: Request, userEmail: string): Promise<{ key: string, fullUrl: string } | null> => {
@@ -195,8 +197,40 @@ export const getAllClients = async (req: Request, res: Response) => {
     const userId = await validateUserAuth(req, res);
     if (!userId) return;
 
-    const businessId = await validateBusinessForClient(userId, res);
-    if (!businessId) return;
+    // Get user to check role
+    const user = await User.findById(userId);
+    if (!user) {
+      return errorResponseHandler(
+        "User not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    let businessId;
+
+    // If user is a team member, get business ID from team membership
+    if (user.businessRole === "team-member") {
+      const teamMembership = await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true
+      });
+      
+      if (!teamMembership) {
+        return errorResponseHandler(
+          "You don't have access to any business",
+          httpStatusCode.FORBIDDEN,
+          res
+        );
+      }
+      
+      businessId = teamMembership.businessId;
+    } else {
+      // For business owners, use the existing function
+      businessId = await validateBusinessForClient(userId, res);
+      if (!businessId) return;
+    }
 
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 10;
@@ -239,14 +273,58 @@ export const getClientById = async (req: Request, res: Response) => {
     const userId = await validateUserAuth(req, res);
     if (!userId) return;
 
+    // Get user to check role
+    const user = await User.findById(userId);
+    if (!user) {
+      return errorResponseHandler(
+        "User not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    let businessId;
+
+    // If user is a team member, get business ID from team membership
+    if (user.businessRole === "team-member") {
+      const teamMembership = await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true
+      });
+      
+      if (!teamMembership) {
+        return errorResponseHandler(
+          "You don't have access to any business",
+          httpStatusCode.FORBIDDEN,
+          res
+        );
+      }
+      
+      businessId = teamMembership.businessId;
+    } else {
+      // For business owners, use the existing function
+      businessId = await validateBusinessForClient(userId, res);
+      if (!businessId) return;
+    }
+
     const { clientId } = req.params;
     if (!(await validateObjectId(clientId, "Client", res))) return;
 
-    const businessId = await validateBusinessForClient(userId, res);
-    if (!businessId) return;
-
-    const client = await validateClientAccess(clientId, businessId, res);
-    if (!client) return;
+    // Find the client that belongs to this business
+    const client = await Client.findOne({
+      _id: clientId,
+      businessId: businessId,
+      isDeleted: false
+    });
+    
+    if (!client) {
+      return errorResponseHandler(
+        "Client not found or you don't have permission to access it",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
 
     return successResponse(res, "Client fetched successfully", {
       client,

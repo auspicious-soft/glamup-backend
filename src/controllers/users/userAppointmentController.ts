@@ -30,6 +30,8 @@ import Service from "models/services/servicesSchema";
 import Business from "models/business/userBusinessProfileSchema";
 import Category from "models/category/categorySchema";
 import Client from "models/client/clientSchema";
+import User from "models/user/userSchema";
+import RegisteredTeamMember from "models/registeredTeamMember/registeredTeamMemberSchema";
 
 export const createAppointment = async (req: Request, res: Response) => {
   const session = await startSession();
@@ -343,21 +345,47 @@ export const getAppointmentsByDate = async (req: Request, res: Response) => {
   try {
     const userId = await validateUserAuth(req, res);
     if (!userId) return;
-    
-    const businessId = await validateBusinessProfile(userId, res);
-    if (!businessId) return;
-    
-    const { date } = req.query;
-    
-    if (!date) {
+
+    // Get user to check role
+    const user = await User.findById(userId);
+    if (!user) {
       return errorResponseHandler(
-        "Date is required",
-        httpStatusCode.BAD_REQUEST,
+        "User not found",
+        httpStatusCode.NOT_FOUND,
         res
       );
     }
+
+    let businessId;
+
+    // If user is a team member, get business ID from team membership
+    if (user.businessRole === "team-member") {
+      const teamMembership = await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true
+      });
+      
+      if (!teamMembership) {
+        return errorResponseHandler(
+          "You don't have access to any business",
+          httpStatusCode.FORBIDDEN,
+          res
+        );
+      }
+      
+      businessId = teamMembership.businessId;
+    } else {
+      // For business owners, use the existing function
+      businessId = await validateBusinessProfile(userId, res);
+      if (!businessId) return;
+    }
     
-    const dateQuery = buildDateRangeQuery(date, null, null);
+    const dateQuery = buildDateRangeQuery(
+      req.query.date, 
+      req.query.startDate, 
+      req.query.endDate
+    );
     
     if (dateQuery && dateQuery.error) {
       return errorResponseHandler(
@@ -367,33 +395,53 @@ export const getAppointmentsByDate = async (req: Request, res: Response) => {
       );
     }
     
-    const queryDate = new Date(date as string);
+    const query = buildAppointmentQuery(
+      businessId,
+      req.query.teamMemberId as string,
+      req.query.clientId as string,
+      req.query.categoryId as string,
+      req.query.status as string,
+      dateQuery
+    );
     
-    // Updated query to exclude PENDING appointments and appointments with deleted clients
-    const appointments = await Appointment.find({
-      businessId: businessId,
-      status: { $ne: "PENDING" }, // Exclude PENDING appointments
-      ...dateQuery,
-      isDeleted: false
-    }).populate({
-      path: 'clientId',
-      match: { isDeleted: false } // Only include appointments where client is not deleted
-    }).sort({ date: 1, startTime: 1 });
+    if (query.error) {
+      return errorResponseHandler(
+        query.error,
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
     
-    // Filter out appointments where client is deleted (populate returned null)
-    const filteredAppointments = appointments.filter(appointment => appointment.clientId);
+    const pagination = preparePagination(
+      req.query.page as string,
+      req.query.limit as string
+    );
+    
+    const totalAppointments = await Appointment.countDocuments(query);
+    
+    const appointments = await Appointment.find(query)
+      .populate('clientId')
+      .populate('teamMemberId')
+      .populate('categoryId')
+      .sort({ date: 1, startTime: 1 })
+      .skip(pagination.skip)
+      .limit(pagination.limit);
+    
+    const paginationMetadata = preparePaginationMetadata(
+      totalAppointments,
+      pagination
+    );
     
     return successResponse(
       res,
       "Appointments fetched successfully",
-      { 
-        date: formatDateForResponse(queryDate),
-        count: filteredAppointments.length,
-        appointments: filteredAppointments 
+      {
+        ...paginationMetadata,
+        appointments
       }
     );
   } catch (error: any) {
-    console.error("Error fetching appointments by date:", error);
+    console.error("Error fetching appointments:", error);
     const parsedError = errorParser(error);
     return res.status(parsedError.code).json({
       success: false,
@@ -402,15 +450,48 @@ export const getAppointmentsByDate = async (req: Request, res: Response) => {
   }
 };
 
+
 export const getTeamMemberAppointments = async (req: Request, res: Response) => {
   try {
     const userId = await validateUserAuth(req, res);
     if (!userId) return;
     
-    const { teamMemberId } = req.params;
+    // Get user to check role
+    const user = await User.findById(userId);
+    if (!user) {
+      return errorResponseHandler(
+        "User not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    let businessId;
+
+    // If user is a team member, get business ID from team membership
+    if (user.businessRole === "team-member") {
+      const teamMembership = await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true
+      });
+      
+      if (!teamMembership) {
+        return errorResponseHandler(
+          "You don't have access to any business",
+          httpStatusCode.FORBIDDEN,
+          res
+        );
+      }
+      
+      businessId = teamMembership.businessId;
+    } else {
+      // For business owners, use the existing function
+      businessId = await validateBusinessProfile(userId, res);
+      if (!businessId) return;
+    }
     
-    const businessId = await validateBusinessProfile(userId, res);
-    if (!businessId) return;
+    const { teamMemberId } = req.params;
     
     const teamMember = await validateTeamMemberAccess(teamMemberId, businessId, res);
     if (!teamMember) return;
@@ -794,10 +875,42 @@ export const getAppointmentById = async (req: Request, res: Response) => {
     const userId = await validateUserAuth(req, res);
     if (!userId) return;
     
-    const { appointmentId } = req.params;
+    // Get user to check role
+    const user = await User.findById(userId);
+    if (!user) {
+      return errorResponseHandler(
+        "User not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    let businessId;
+
+    // If user is a team member, get business ID from team membership
+    if (user.businessRole === "team-member") {
+      const teamMembership = await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true
+      });
+      
+      if (!teamMembership) {
+        return errorResponseHandler(
+          "You don't have access to any business",
+          httpStatusCode.FORBIDDEN,
+          res
+        );
+      }
+      
+      businessId = teamMembership.businessId;
+    } else {
+      // For business owners, use the existing function
+      businessId = await validateBusinessProfile(userId, res);
+      if (!businessId) return;
+    }
     
-    const businessId = await validateBusinessProfile(userId, res);
-    if (!businessId) return;
+    const { appointmentId } = req.params;
     
     const appointment = await validateAppointmentAccess(appointmentId, businessId, res);
     if (!appointment) return;
@@ -929,8 +1042,40 @@ export const getPendingAppointments = async (req: Request, res: Response) => {
     const userId = await validateUserAuth(req, res);
     if (!userId) return;
     
-    const businessId = await validateBusinessProfile(userId, res);
-    if (!businessId) return;
+    // Get user to check role
+    const user = await User.findById(userId);
+    if (!user) {
+      return errorResponseHandler(
+        "User not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    let businessId;
+
+    // If user is a team member, get business ID from team membership
+    if (user.businessRole === "team-member") {
+      const teamMembership = await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true
+      });
+      
+      if (!teamMembership) {
+        return errorResponseHandler(
+          "You don't have access to any business",
+          httpStatusCode.FORBIDDEN,
+          res
+        );
+      }
+      
+      businessId = teamMembership.businessId;
+    } else {
+      // For business owners, use the existing function
+      businessId = await validateBusinessProfile(userId, res);
+      if (!businessId) return;
+    }
     
     // Get pagination parameters
     const pagination = preparePagination(
@@ -993,23 +1138,15 @@ export const getPendingAppointments = async (req: Request, res: Response) => {
     // Prepare pagination metadata
     const paginationMetadata = preparePaginationMetadata(
       totalAppointments,
-      pagination,
-      pendingAppointments
+      pagination
     );
-    
-    // Add source information to each appointment
-    const appointmentsWithSource = pendingAppointments.map(appointment => {
-      const appointmentObj: any = appointment.toObject();
-      appointmentObj.source = appointmentObj.createdVia === "client_booking" ? "client" : "business";
-      return appointmentObj;
-    });
     
     return successResponse(
       res,
       "Pending appointments fetched successfully",
       {
         ...paginationMetadata,
-        appointments: appointmentsWithSource
+        appointments: pendingAppointments
       }
     );
   } catch (error: any) {
