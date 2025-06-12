@@ -5,12 +5,15 @@ export interface PackageService {
   name: string;
   duration: number;
   price: number;
+  categoryId: mongoose.Types.ObjectId;
+  categoryName: string;
 }
 
 export interface IPackage {
   name: string;
   categoryId: mongoose.Types.ObjectId;
   categoryName: string;
+  categoryIds: mongoose.Types.ObjectId[]; // Array of all category IDs
   description: string;
   services: PackageService[];
   duration: number; // total duration in minutes (manually entered by user)
@@ -22,6 +25,7 @@ export interface IPackage {
   finalPrice: number;
   currency: string;
   businessId: mongoose.Types.ObjectId;
+  isGlobalCategory: boolean; // Whether the primary category is a global category
   isActive: boolean;
   isDeleted: boolean;
   createdAt: Date;
@@ -40,7 +44,7 @@ const packageSchema = new mongoose.Schema(
     categoryId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Category',
-      required: true,
+      required: true, // Primary category
     },
     categoryName: {
       type: String,
@@ -50,6 +54,10 @@ const packageSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    categoryIds: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Category',
+    }],
     services: [{
       serviceId: {
         type: mongoose.Schema.Types.ObjectId,
@@ -68,6 +76,15 @@ const packageSchema = new mongoose.Schema(
         type: Number,
         required: true,
       },
+      categoryId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Category',
+        required: true,
+      },
+      categoryName: {
+        type: String,
+        required: true,
+      }
     }],
     duration: {
       type: Number,
@@ -148,4 +165,6 @@ packageSchema.pre('save', function(next) {
 
 const Package = mongoose.model<IPackageDocument>("Package", packageSchema);
 export default Package;
+
+
 

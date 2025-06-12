@@ -34,6 +34,12 @@ interface ServiceForPackage {
   price: number;
 }
 
+// Define the type for category and services structure
+interface CategoryWithServices {
+  categoryId: string;
+  services: string[];
+}
+
 // Package functions
 export const createPackage = async (req: Request, res: Response) => {
   const session = await startSession();
@@ -44,9 +50,8 @@ export const createPackage = async (req: Request, res: Response) => {
 
     const { 
       name, 
-      categoryId, 
+      categoryAndServices, // New structure with multiple categories and their services
       description, 
-      services, 
       duration, 
       priceType, 
       price, 
@@ -56,116 +61,136 @@ export const createPackage = async (req: Request, res: Response) => {
       currency
     } = req.body;
     
-    if (!name || !categoryId) {
+    if (!name || !categoryAndServices || !Array.isArray(categoryAndServices) || categoryAndServices.length === 0) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
-        "Package name and category ID are required",
+        "Package name and at least one category with services are required",
         httpStatusCode.BAD_REQUEST,
         res
       );
     }
 
-    // Check if this is a global category
-    const businessProfile = await UserBusinessProfile.findOne({
-      _id: businessId,
-      "selectedCategories.categoryId": categoryId,
-      isDeleted: false
-    }).session(session);
-    
+    // Process all categories and their services
+    let allProcessedServices: ServiceForPackage[] = [];
+    let primaryCategoryId = categoryAndServices[0].categoryId; // Use first category as primary
+    let primaryCategoryName = "";
     let isGlobalCategory = false;
-    let categoryName = "";
-    
-    if (businessProfile && businessProfile.selectedCategories.some(cat => cat.categoryId.toString() === categoryId)) {
-      // This is a global category that the business has selected
-      isGlobalCategory = true;
-      const globalCategory = businessProfile.selectedCategories.find(
-        cat => cat.categoryId.toString() === categoryId
-      );
+
+    // Validate each category and its services
+    for (const categoryWithServices of categoryAndServices) {
+      const { categoryId, services } = categoryWithServices;
       
-      if (!globalCategory?.isActive) {
+      if (!categoryId || !services || !Array.isArray(services) || services.length === 0) {
         await session.abortTransaction();
         session.endSession();
         return errorResponseHandler(
-          "This global category is inactive in your business profile",
+          "Each category must have a valid categoryId and at least one service",
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
+
+      // Check if this is a global category
+      const businessProfile = await UserBusinessProfile.findOne({
+        _id: businessId,
+        "selectedCategories.categoryId": categoryId,
+        isDeleted: false
+      }).session(session);
+      
+      let isCategoryGlobal = false;
+      let categoryName = "";
+      
+      if (businessProfile && businessProfile.selectedCategories.some(cat => cat.categoryId.toString() === categoryId)) {
+        // This is a global category that the business has selected
+        isCategoryGlobal = true;
+        const globalCategory = businessProfile.selectedCategories.find(
+          cat => cat.categoryId.toString() === categoryId
+        );
+        
+        if (!globalCategory?.isActive) {
+          await session.abortTransaction();
+          session.endSession();
+          return errorResponseHandler(
+            `The global category with ID ${categoryId} is inactive in your business profile`,
+            httpStatusCode.BAD_REQUEST,
+            res
+          );
+        }
+        
+        categoryName = globalCategory ? globalCategory.name : "";
+      } else {
+        // This is a regular category
+        const category = await validateCategoryAccess(categoryId, businessId, res, session);
+        if (!category) return;
+        categoryName = (category as any).name;
+      }
+
+      // If this is the first category, set it as primary
+      if (categoryId === primaryCategoryId) {
+        primaryCategoryName = categoryName;
+        isGlobalCategory = isCategoryGlobal;
+      }
+
+      // Find services and check if they belong to the specified category and business
+      const existingServices = await Service.find({
+        _id: { $in: services },
+        categoryId: categoryId,
+        businessId: businessId,
+        isDeleted: false
+      }).session(session);
+      
+      if (existingServices.length !== services.length) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          `One or more services don't belong to the category with ID ${categoryId}, or don't belong to your business`,
           httpStatusCode.BAD_REQUEST,
           res
         );
       }
       
-      categoryName = globalCategory ? globalCategory.name : "";
-    } else {
-      // This is a regular category
-      const category = await validateCategoryAccess(categoryId, businessId, res, session);
-      if (!category) return;
-      categoryName = (category as any).name;
-    }
-
-    if (!services || !Array.isArray(services) || services.length === 0) {
-      await session.abortTransaction();
-      session.endSession();
-      return errorResponseHandler(
-        "At least one service must be selected for the package",
-        httpStatusCode.BAD_REQUEST,
-        res
-      );
-    }
-
-    const serviceIds = services.map(service => service.serviceId);
-    
-    // Find services and check if they belong to the specified category and business
-    const existingServices = await Service.find({
-      _id: { $in: serviceIds },
-      categoryId: categoryId,
-      businessId: businessId,
-      isDeleted: false
-    }).session(session);
-    
-    if (existingServices.length !== serviceIds.length) {
-      await session.abortTransaction();
-      session.endSession();
-      return errorResponseHandler(
-        "One or more services don't belong to the selected category, or don't belong to your business",
-        httpStatusCode.BAD_REQUEST,
-        res
-      );
-    }
-    
-    // Check if all services are active
-    const inactiveServices = existingServices.filter((service: any) => !service.isActive);
-    if (inactiveServices.length > 0) {
-      await session.abortTransaction();
-      session.endSession();
-      return errorResponseHandler(
-        `The following services are inactive: ${inactiveServices.map((s: any) => s.name).join(', ')}`,
-        httpStatusCode.BAD_REQUEST,
-        res
-      );
-    }
-    
-    // For global category, check if all services have isGlobalCategory set to true
-    if (isGlobalCategory) {
-      const nonGlobalServices = existingServices.filter((service: any) => !service.isGlobalCategory);
-      if (nonGlobalServices.length > 0) {
+      // Check if all services are active
+      const inactiveServices = existingServices.filter((service: any) => !service.isActive);
+      if (inactiveServices.length > 0) {
         await session.abortTransaction();
         session.endSession();
         return errorResponseHandler(
-          `The following services do not belong to the global category: ${nonGlobalServices.map((s: any) => s.name).join(', ')}`,
+          `The following services are inactive: ${inactiveServices.map((s: any) => s.name).join(', ')}`,
           httpStatusCode.BAD_REQUEST,
           res
         );
       }
+      
+      // For global category, check if all services have isGlobalCategory set to true
+      if (isCategoryGlobal) {
+        const nonGlobalServices = existingServices.filter((service: any) => !service.isGlobalCategory);
+        if (nonGlobalServices.length > 0) {
+          await session.abortTransaction();
+          session.endSession();
+          return errorResponseHandler(
+            `The following services do not belong to the global category: ${nonGlobalServices.map((s: any) => s.name).join(', ')}`,
+            httpStatusCode.BAD_REQUEST,
+            res
+          );
+        }
+      }
+
+      const processedServices = existingServices.map((service: any) => ({
+        serviceId: service._id,
+        name: service.name,
+        duration: service.duration,
+        price: service.price,
+        categoryId: categoryId,
+        categoryName: categoryName
+      }));
+
+      // Add to all processed services
+      allProcessedServices = [...allProcessedServices, ...processedServices];
     }
 
-    const processedServices = existingServices.map((service: any) => ({
-      serviceId: service._id,
-      name: service.name,
-      duration: service.duration,
-      price: service.price
-    }));
-
-    // Calculate total price based on services
-    const totalServicesPrice = processedServices.reduce((sum, service) => sum + service.price, 0);
+    // Calculate total price based on all services
+    const totalServicesPrice = allProcessedServices.reduce((sum, service) => sum + service.price, 0);
     
     // Use provided price or calculate from services
     const packagePrice = price !== undefined ? price : totalServicesPrice;
@@ -227,15 +252,19 @@ export const createPackage = async (req: Request, res: Response) => {
       finalPrice = packagePrice - discountAmount;
     }
 
+    // Store all category IDs in the package
+    const categoryIds = categoryAndServices.map(item => item.categoryId);
+
     const newPackage = await Package.create(
       [
         {
           name: name.trim(),
-          categoryId: categoryId,
-          categoryName: categoryName,
+          categoryId: primaryCategoryId, // Primary category (first one)
+          categoryName: primaryCategoryName,
+          categoryIds: categoryIds, // Store all category IDs
           description: description || "",
-          services: processedServices,
-          duration: duration || processedServices.reduce((sum, service) => sum + service.duration, 0),
+          services: allProcessedServices,
+          duration: duration || allProcessedServices.reduce((sum, service) => sum + service.duration, 0),
           priceType: priceType || "Fixed price",
           price: packagePrice,
           maxPrice: priceType === 'range' ? maxPrice : null,
@@ -434,9 +463,8 @@ export const updatePackage = async (req: Request, res: Response) => {
 
     const { 
       name, 
-      categoryId, 
+      categoryAndServices, // New structure with multiple categories and their services
       description, 
-      services, 
       duration, 
       priceType, 
       price, 
@@ -455,60 +483,146 @@ export const updatePackage = async (req: Request, res: Response) => {
       updateData.name = name.trim();
     }
     
-    // Check if the existing package is for a global category
-    const isExistingGlobalCategory = (existingPackage as any).isGlobalCategory;
-    
-    // Update category if provided
-    if (categoryId && categoryId !== (existingPackage as any).categoryId.toString()) {
-      // If the existing package is for a global category, don't allow changing to a different category
-      if (isExistingGlobalCategory) {
-        await session.abortTransaction();
-        session.endSession();
-        return errorResponseHandler(
-          "Cannot change the category of a package linked to a global category",
-          httpStatusCode.BAD_REQUEST,
-          res
-        );
-      }
-      
-      // Check if the new category is a global category
-      const businessProfile = await UserBusinessProfile.findOne({
-        _id: businessId,
-        "selectedCategories.categoryId": categoryId,
-        isDeleted: false
-      }).session(session);
-      
+    // Process categoryAndServices if provided
+    if (categoryAndServices && Array.isArray(categoryAndServices) && categoryAndServices.length > 0) {
+      // Process all categories and their services
+      let allProcessedServices: ServiceForPackage[] = [];
+      let primaryCategoryId = categoryAndServices[0].categoryId; // Use first category as primary
+      let primaryCategoryName = "";
       let isGlobalCategory = false;
-      let categoryName = "";
-      
-      if (businessProfile && businessProfile.selectedCategories.some(cat => cat.categoryId.toString() === categoryId)) {
-        // This is a global category that the business has selected
-        isGlobalCategory = true;
-        const globalCategory = businessProfile.selectedCategories.find(
-          cat => cat.categoryId.toString() === categoryId
-        );
+      let categoryIds: string[] = [];
+
+      // Validate each category and its services
+      for (const categoryWithServices of categoryAndServices) {
+        const { categoryId, services } = categoryWithServices;
         
-        if (!globalCategory?.isActive) {
+        if (!categoryId || !services || !Array.isArray(services) || services.length === 0) {
           await session.abortTransaction();
           session.endSession();
           return errorResponseHandler(
-            "This global category is inactive in your business profile",
+            "Each category must have a valid categoryId and at least one service",
+            httpStatusCode.BAD_REQUEST,
+            res
+          );
+        }
+
+        categoryIds.push(categoryId);
+
+        // Check if this is a global category
+        const businessProfile = await UserBusinessProfile.findOne({
+          _id: businessId,
+          "selectedCategories.categoryId": categoryId,
+          isDeleted: false
+        }).session(session);
+        
+        let isCategoryGlobal = false;
+        let categoryName = "";
+        
+        if (businessProfile && businessProfile.selectedCategories.some(cat => cat.categoryId.toString() === categoryId)) {
+          // This is a global category that the business has selected
+          isCategoryGlobal = true;
+          const globalCategory = businessProfile.selectedCategories.find(
+            cat => cat.categoryId.toString() === categoryId
+          );
+          
+          if (!globalCategory?.isActive) {
+            await session.abortTransaction();
+            session.endSession();
+            return errorResponseHandler(
+              `The global category with ID ${categoryId} is inactive in your business profile`,
+              httpStatusCode.BAD_REQUEST,
+              res
+            );
+          }
+          
+          categoryName = globalCategory ? globalCategory.name : "";
+        } else {
+          // This is a regular category
+          const category = await validateCategoryAccess(categoryId, businessId, res, session);
+          if (!category) return;
+          categoryName = (category as any).name;
+        }
+
+        // If this is the first category, set it as primary
+        if (categoryId === primaryCategoryId) {
+          primaryCategoryName = categoryName;
+          isGlobalCategory = isCategoryGlobal;
+        }
+
+        // Find services and check if they belong to the specified category and business
+        const existingServices = await Service.find({
+          _id: { $in: services },
+          categoryId: categoryId,
+          businessId: businessId,
+          isDeleted: false
+        }).session(session);
+        
+        if (existingServices.length !== services.length) {
+          await session.abortTransaction();
+          session.endSession();
+          return errorResponseHandler(
+            `One or more services don't belong to the category with ID ${categoryId}, or don't belong to your business`,
             httpStatusCode.BAD_REQUEST,
             res
           );
         }
         
-        categoryName = globalCategory ? globalCategory.name : "";
-      } else {
-        // This is a regular category
-        const category = await validateCategoryAccess(categoryId, businessId, res, session);
-        if (!category) return;
-        categoryName = (category as any).name;
+        // Check if all services are active
+        const inactiveServices = existingServices.filter((service: any) => !service.isActive);
+        if (inactiveServices.length > 0) {
+          await session.abortTransaction();
+          session.endSession();
+          return errorResponseHandler(
+            `The following services are inactive: ${inactiveServices.map((s: any) => s.name).join(', ')}`,
+            httpStatusCode.BAD_REQUEST,
+            res
+          );
+        }
+        
+        // For global category, check if all services have isGlobalCategory set to true
+        if (isCategoryGlobal) {
+          const nonGlobalServices = existingServices.filter((service: any) => !service.isGlobalCategory);
+          if (nonGlobalServices.length > 0) {
+            await session.abortTransaction();
+            session.endSession();
+            return errorResponseHandler(
+              `The following services do not belong to the global category: ${nonGlobalServices.map((s: any) => s.name).join(', ')}`,
+              httpStatusCode.BAD_REQUEST,
+              res
+            );
+          }
+        }
+
+        const processedServices = existingServices.map((service: any) => ({
+          serviceId: service._id,
+          name: service.name,
+          duration: service.duration,
+          price: service.price,
+          categoryId: categoryId,
+          categoryName: categoryName
+        }));
+
+        // Add to all processed services
+        allProcessedServices = [...allProcessedServices, ...processedServices];
+      }
+
+      // Update the package with new category information
+      updateData.categoryId = primaryCategoryId;
+      updateData.categoryName = primaryCategoryName;
+      updateData.categoryIds = categoryIds;
+      updateData.services = allProcessedServices;
+      updateData.isGlobalCategory = isGlobalCategory;
+      
+      // Recalculate duration based on services if not explicitly provided
+      if (duration === undefined) {
+        updateData.duration = allProcessedServices.reduce((sum, service) => sum + service.duration, 0);
       }
       
-      updateData.categoryId = categoryId;
-      updateData.categoryName = categoryName;
-      updateData.isGlobalCategory = isGlobalCategory;
+      // Recalculate price based on services if not explicitly provided
+      if (price === undefined) {
+        const totalServicesPrice = allProcessedServices.reduce((sum, service) => sum + service.price, 0);
+        updateData.price = totalServicesPrice;
+      }
     }
     
     // Update description if provided
@@ -516,78 +630,9 @@ export const updatePackage = async (req: Request, res: Response) => {
       updateData.description = description;
     }
     
-    // Update services if provided
-    if (services && Array.isArray(services)) {
-      // Get the category ID to use for validation
-      const categoryIdToUse = categoryId || (existingPackage as any).categoryId;
-      const isGlobalCategoryToUse = updateData.isGlobalCategory !== undefined ? 
-        updateData.isGlobalCategory : isExistingGlobalCategory;
-      
-      const serviceIds = services.map(service => service.serviceId);
-      
-      // Find services and check if they belong to the specified category and business
-      const existingServices = await Service.find({
-        _id: { $in: serviceIds },
-        categoryId: categoryIdToUse,
-        businessId: businessId,
-        isDeleted: false
-      }).session(session);
-      
-      if (existingServices.length !== serviceIds.length) {
-        await session.abortTransaction();
-        session.endSession();
-        return errorResponseHandler(
-          "One or more services do not exist, don't belong to the selected category, or don't belong to your business",
-          httpStatusCode.BAD_REQUEST,
-          res
-        );
-      }
-      
-      // Check if all services are active
-      const inactiveServices = existingServices.filter((service: any) => !service.isActive);
-      if (inactiveServices.length > 0) {
-        await session.abortTransaction();
-        session.endSession();
-        return errorResponseHandler(
-          `The following services are inactive: ${inactiveServices.map((s: any) => s.name).join(', ')}`,
-          httpStatusCode.BAD_REQUEST,
-          res
-        );
-      }
-      
-      // For global category, check if all services have isGlobalCategory set to true
-      if (isGlobalCategoryToUse) {
-        const nonGlobalServices = existingServices.filter((service: any) => !service.isGlobalCategory);
-        if (nonGlobalServices.length > 0) {
-          await session.abortTransaction();
-          session.endSession();
-          return errorResponseHandler(
-            `The following services do not belong to the global category: ${nonGlobalServices.map((s: any) => s.name).join(', ')}`,
-            httpStatusCode.BAD_REQUEST,
-            res
-          );
-        }
-      }
-      
-      const processedServices = existingServices.map((service: any) => ({
-        serviceId: service._id,
-        name: service.name,
-        duration: service.duration,
-        price: service.price
-      }));
-      
-      updateData.services = processedServices;
-    }
-    
     // Update duration if provided
     if (duration !== undefined) {
       updateData.duration = duration;
-    } else if (services && Array.isArray(services) && updateData.services) {
-      // Recalculate duration based on services if not explicitly provided
-      updateData.duration = (updateData.services as ServiceForPackage[]).reduce(
-        (sum: number, service: ServiceForPackage) => sum + service.duration,
-        0
-      );
     }
     
     // Update price type if provided
@@ -616,13 +661,6 @@ export const updatePackage = async (req: Request, res: Response) => {
         );
       }
       updateData.price = price;
-    } else if (services && Array.isArray(services) && updateData.services) {
-      // Recalculate price based on services if not explicitly provided
-      const totalServicesPrice = (updateData.services as ServiceForPackage[]).reduce(
-        (sum: number, service: ServiceForPackage) => sum + service.price, 
-        0
-      );
-      updateData.price = totalServicesPrice;
     }
     
     // Update max price if provided
@@ -675,6 +713,7 @@ export const updatePackage = async (req: Request, res: Response) => {
       
       updateData.discountPercentage = calculatedDiscountPercentage;
       updateData.discountAmount = calculatedDiscountAmount;
+      updateData.finalPrice = finalPrice;
     } else if (discountAmount !== undefined) {
       if (discountAmount >= finalPrice) {
         await session.abortTransaction();
@@ -692,6 +731,7 @@ export const updatePackage = async (req: Request, res: Response) => {
       
       updateData.discountPercentage = calculatedDiscountPercentage;
       updateData.discountAmount = calculatedDiscountAmount;
+      updateData.finalPrice = finalPrice;
     } else if (updateData.price !== undefined) {
       // If price changed but discount values weren't provided, recalculate based on existing percentage
       const existingDiscountPercentage = (existingPackage as any).discountPercentage || 0;
@@ -703,12 +743,10 @@ export const updatePackage = async (req: Request, res: Response) => {
         
         updateData.discountPercentage = calculatedDiscountPercentage;
         updateData.discountAmount = calculatedDiscountAmount;
+        updateData.finalPrice = finalPrice;
+      } else {
+        updateData.finalPrice = finalPrice;
       }
-    }
-    
-    // Update final price if any price-related fields changed
-    if (updateData.price !== undefined || discountPercentage !== undefined || discountAmount !== undefined) {
-      updateData.finalPrice = finalPrice;
     }
     
     // Update the package
