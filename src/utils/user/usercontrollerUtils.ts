@@ -425,7 +425,7 @@ export const processClientUpdateData = (
   // Basic fields
   const basicFields = [
     'name', 'email', 'phoneNumber', 'countryCode', 
-    'profilePicture', 'birthday', 'gender', 'notes', 'isActive'
+    'profilePicture', 'birthday', 'gender', 'notes', 'isActive', 'countryCallingCode'
   ];
   
   basicFields.forEach(field => {
