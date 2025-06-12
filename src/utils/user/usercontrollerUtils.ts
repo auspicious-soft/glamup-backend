@@ -30,7 +30,7 @@ export const validateUserAuth = async (
   const userId = extractUserId(req);
   
   if (!userId) {
-    if (session) {
+    if (session && session.inTransaction()) {
       await session.abortTransaction();
       session.endSession();
     }
@@ -63,8 +63,10 @@ export const validateObjectId = async (
   res: Response, 
   session?: mongoose.ClientSession
 ): Promise<boolean> => {
+  // Check if id is undefined or null
+
   if (!id) {
-    if (session) {
+    if (session && session.inTransaction()) {
       await session.abortTransaction();
       session.endSession();
     }
@@ -72,8 +74,9 @@ export const validateObjectId = async (
     return false;
   }
   
+  // Check if id is a valid MongoDB ObjectId
   if (!mongoose.Types.ObjectId.isValid(id)) {
-    if (session) {
+    if (session && session.inTransaction()) {
       await session.abortTransaction();
       session.endSession();
     }
@@ -175,10 +178,17 @@ export const handleTransactionError = async (
   error: any, 
   res: Response
 ): Promise<Response> => {
-  if (session.inTransaction()) {
-    await session.abortTransaction();
+  try {
+    if (session && session.inTransaction()) {
+      await session.abortTransaction();
+    }
+  } catch (abortError) {
+    console.error("Error aborting transaction:", abortError);
   }
-  session.endSession();
+  
+  if (session) {
+    session.endSession();
+  }
   
   console.error("Transaction error:", error);
   const parsedError = errorParser(error);
@@ -648,7 +658,7 @@ export const validateBusinessProfileAccess = async (
     : await mongoose.model('User').findById(userId);
   
   if (!user) {
-    if (session) {
+    if (session && session.inTransaction()) {
       await session.abortTransaction();
       session.endSession();
     }
@@ -662,7 +672,7 @@ export const validateBusinessProfileAccess = async (
   
   // Validate profileId is a valid ObjectId
   if (!mongoose.Types.ObjectId.isValid(profileId)) {
-    if (session) {
+    if (session && session.inTransaction()) {
       await session.abortTransaction();
       session.endSession();
     }
@@ -692,7 +702,7 @@ export const validateBusinessProfileAccess = async (
         });
     
     if (!businessProfile) {
-      if (session) {
+      if (session && session.inTransaction()) {
         await session.abortTransaction();
         session.endSession();
       }
@@ -724,7 +734,7 @@ export const validateBusinessProfileAccess = async (
         });
     
     if (!teamMembership) {
-      if (session) {
+      if (session && session.inTransaction()) {
         await session.abortTransaction();
         session.endSession();
       }
@@ -750,7 +760,7 @@ export const validateBusinessProfileAccess = async (
         });
     
     if (!businessProfile) {
-      if (session) {
+      if (session && session.inTransaction()) {
         await session.abortTransaction();
         session.endSession();
       }
@@ -766,7 +776,7 @@ export const validateBusinessProfileAccess = async (
   }
   // User is neither an owner nor a team member
   else {
-    if (session) {
+    if (session && session.inTransaction()) {
       await session.abortTransaction();
       session.endSession();
     }

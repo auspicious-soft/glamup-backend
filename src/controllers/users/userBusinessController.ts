@@ -18,6 +18,7 @@ import {
   startSession,
   handleTransactionError,
   validateBusinessProfileAccess,
+  extractUserId,
 } from "../../utils/user/usercontrollerUtils";
 import User from "../../models/user/userSchema";
 import GlobalCategory from "../../models/globalCategory/globalCategorySchema";
@@ -31,6 +32,9 @@ import {
 } from "../../config/s3";
 import { DeleteObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import RegisteredTeamMember from "models/registeredTeamMember/registeredTeamMemberSchema";
+import Service from "models/services/servicesSchema";
+import Package from "models/package/packageSchema";
+import mongoose from "mongoose";
 
 const validateAndProcessGlobalCategories = async (
   categoryIds: string[],
@@ -485,23 +489,32 @@ export const getBusinessProfileById = async (req: Request, res: Response) => {
 };
 
 export const updateBusinessProfile = async (req: Request, res: Response) => {
-  const session = await startSession();
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
   try {
     // Validate user authentication
-    const userId = await validateUserAuth(req, res, session);
+    const userId = extractUserId(req);
     if (!userId) {
       await session.abortTransaction();
       session.endSession();
-      return;
+      return errorResponseHandler(
+        "Invalid user authentication",
+        httpStatusCode.UNAUTHORIZED,
+        res
+      );
     }
 
     // Validate profileId
     const { profileId } = req.params;
-    if (!(await validateObjectId(profileId, "Business profile", res, session))) {
+    if (!mongoose.Types.ObjectId.isValid(profileId)) {
       await session.abortTransaction();
       session.endSession();
-      return;
+      return errorResponseHandler(
+        "Invalid Business profile ID format",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
     }
 
     // Find existing business profile
@@ -604,17 +617,41 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       Array.isArray(selectedCategories) &&
       selectedCategories.length > 0
     ) {
-      const processedCategoriesResult = await validateAndProcessGlobalCategories(
-        selectedCategories,
-        res,
-        session
-      );
-      if (processedCategoriesResult === null) {
+      // Validate that all category IDs are valid ObjectIds
+      for (const categoryId of selectedCategories) {
+        if (!mongoose.Types.ObjectId.isValid(categoryId)) {
+          await session.abortTransaction();
+          session.endSession();
+          return errorResponseHandler(
+            `Invalid category ID format: ${categoryId}`,
+            httpStatusCode.BAD_REQUEST,
+            res
+          );
+        }
+      }
+
+      // Check if all categories exist
+      const categories = await GlobalCategory.find({
+        _id: { $in: selectedCategories },
+        isActive: true,
+        isDeleted: false
+      }).session(session);
+
+      if (categories.length !== selectedCategories.length) {
         await session.abortTransaction();
         session.endSession();
-        return;
+        return errorResponseHandler(
+          "One or more selected global categories do not exist or are inactive",
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
       }
-      processedCategories = processedCategoriesResult;
+
+      // Process categories
+      processedCategories = categories.map(category => ({
+        categoryId: category._id,
+        name: category.name
+      }));
     }
 
     // Process business hours
@@ -720,7 +757,210 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
     );
   } catch (error: any) {
     console.error("Error in updateBusinessProfile:", error);
-    return handleTransactionError(session, error, res);
+    
+    // FIXED: Check if session is still in transaction before aborting
+    if (session && session.inTransaction()) {
+      try {
+        await session.abortTransaction();
+      } catch (abortError) {
+        console.error("Error aborting transaction:", abortError);
+      }
+    }
+    
+    // Always end the session
+    if (session) {
+      session.endSession();
+    }
+    
+    // Use direct response instead of handleTransactionError to avoid double response
+    const parsedError = errorParser(error);
+    return res.status(parsedError.code).json({
+      success: false,
+      message: parsedError.message || "An error occurred while updating the business profile",
+    });
+  }
+};
+
+// Update business global categories - completely new implementation
+export const updateBusinessGlobalCategories = async (req: Request, res: Response) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    // Get user ID from authentication
+    const userId = extractUserId(req);
+    if (!userId) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Invalid user authentication",
+        httpStatusCode.UNAUTHORIZED,
+        res
+      );
+    }
+
+    // Get the business profile directly without using validateBusinessProfileAccess
+    const businessProfile = await UserBusinessProfile.findOne({
+      ownerId: userId,
+      isDeleted: false
+    }).session(session);
+
+    if (!businessProfile) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Business profile not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    const { selectedCategories } = req.body;
+
+    if (!Array.isArray(selectedCategories)) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Selected categories must be provided as an array",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    // Get current categories to track changes
+    const currentCategories = businessProfile.selectedCategories || [];
+    const currentCategoryIds = currentCategories.map(cat => cat.categoryId.toString());
+    
+    interface ProcessedCategory {
+      categoryId: mongoose.Types.ObjectId;
+      name: string;
+    }
+    let processedCategories: ProcessedCategory[] = [];
+    interface NewCategoryIds extends Array<string> {}
+    let newCategoryIds: NewCategoryIds = [];
+    
+    // Only process categories if the array is not empty
+    if (selectedCategories.length > 0) {
+      // Validate that all category IDs are valid ObjectIds
+      for (const categoryId of selectedCategories) {
+        if (!mongoose.Types.ObjectId.isValid(categoryId)) {
+          await session.abortTransaction();
+          session.endSession();
+          return errorResponseHandler(
+            `Invalid category ID format: ${categoryId}`,
+            httpStatusCode.BAD_REQUEST,
+            res
+          );
+        }
+      }
+
+      // Check if all categories exist
+      const categories = await GlobalCategory.find({
+        _id: { $in: selectedCategories },
+        isActive: true,
+        isDeleted: false
+      }).session(session);
+
+      if (categories.length !== selectedCategories.length) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          "One or more selected global categories do not exist or are inactive",
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
+
+      // Process categories
+      processedCategories = categories.map(category => ({
+        categoryId: category._id as mongoose.Types.ObjectId,
+        name: category.name
+      }));
+      
+      newCategoryIds = processedCategories.map(cat => cat.categoryId.toString());
+    }
+
+    // Find categories that are being removed
+    const removedCategoryIds = currentCategoryIds.filter(id => !newCategoryIds.includes(id));
+
+    // Update the business profile with new categories (or empty array)
+    const updatedProfile = await UserBusinessProfile.findByIdAndUpdate(
+      businessProfile._id,
+      { $set: { selectedCategories: processedCategories } },
+      { new: true, session }
+    );
+
+    if (!updatedProfile) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Failed to update business profile categories",
+        httpStatusCode.INTERNAL_SERVER_ERROR,
+        res
+      );
+    }
+
+    // Handle services and packages for removed categories
+    if (removedCategoryIds.length > 0) {
+      // Update services
+      await Service.updateMany(
+        {
+          businessId: businessProfile._id,
+          categoryId: { $in: removedCategoryIds },
+          isGlobalCategory: true,
+          isDeleted: false
+        },
+        { $set: { isActive: false } },
+        { session }
+      );
+
+      // Update packages
+      await Package.updateMany(
+        {
+          businessId: businessProfile._id,
+          categoryId: { $in: removedCategoryIds },
+          isGlobalCategory: true,
+          isDeleted: false
+        },
+        { $set: { isActive: false } },
+        { session }
+      );
+    }
+
+    await session.commitTransaction();
+    session.endSession();
+
+    // Prepare response
+    const responseData = {
+      businessProfile: {
+        ...updatedProfile.toObject(),
+        businessProfilePicUrl: updatedProfile.businessProfilePic 
+          ? getS3FullUrl(updatedProfile.businessProfilePic)
+          : null,
+      },
+    };
+
+    return successResponse(
+      res,
+      selectedCategories.length === 0 
+        ? "All global categories have been removed from your business profile" 
+        : "Business global categories updated successfully",
+      responseData,
+      httpStatusCode.OK
+    );
+  } catch (error: any) {
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
+    session.endSession();
+    
+    console.error("Error in updateBusinessGlobalCategories:", error);
+    const parsedError = errorParser(error);
+    return errorResponseHandler(
+      parsedError.message || "An error occurred while updating global categories",
+      parsedError.code || httpStatusCode.INTERNAL_SERVER_ERROR,
+      res
+    );
   }
 };
 
