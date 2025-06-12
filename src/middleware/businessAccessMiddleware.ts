@@ -6,6 +6,11 @@ import RegisteredTeamMember from "../models/registeredTeamMember/registeredTeamM
 
 export const businessAccessMiddleware = async (req: Request, res: Response, next: NextFunction) => {
   try {
+    // Skip business access check for business profile creation endpoint
+    if ( req.path.endsWith('/business-profile')) {
+      return next();
+    }
+    
     // Get user ID from authenticated request
     const userId = (req.user as any)?.id || (req.user as any)?._id;
     

@@ -239,6 +239,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
   const session = await startSession();
 
   try {
+    // Only validate user authentication, not business access
     const userId = await validateUserAuth(req, res, session);
     if (!userId) {
       await session.abortTransaction();
