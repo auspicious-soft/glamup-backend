@@ -26,6 +26,7 @@ import mongoose from "mongoose";
 import User from "models/user/userSchema";
 import RegisteredTeamMember from "models/registeredTeamMember/registeredTeamMemberSchema";
 import { validateBusinessProfile } from "utils/appointment/appointmentUtils";
+import Package from "models/package/packageSchema";
 
 // Category functions
 export const createCategory = async (req: Request, res: Response) => {
@@ -77,6 +78,7 @@ export const createCategory = async (req: Request, res: Response) => {
 };
 
 export const getAllCategories = async (req: Request, res: Response) => {
+  
   try {
     const userId = await validateUserAuth(req, res);
     if (!userId) return;
@@ -131,54 +133,12 @@ export const getAllCategories = async (req: Request, res: Response) => {
       .sort({ name: 1 })
       .skip(skip)
       .limit(limit);
-
-    const businessProfile = await UserBusinessProfile.findOne({
-      _id: businessId,
-      isDeleted: false
-    });
-
-    // Only include active global categories
-    const globalCategories = businessProfile?.selectedCategories?.filter(gc => gc.isActive) || [];
-    
-    // Get the global category IDs
-    const globalCategoryIds = globalCategories.map(gc => gc.categoryId);
-    
-    // Fetch the full details of global categories from GlobalCategory collection
-    const globalCategoryDetails = await mongoose.model("GlobalCategory").find({
-      _id: { $in: globalCategoryIds },
-      isActive: true,
-      isDeleted: false
-    });
-    
-    // Create a map for quick lookup
-    const globalCategoryMap = new Map();
-    globalCategoryDetails.forEach(gc => {
-      globalCategoryMap.set(gc._id.toString(), gc);
-    });
-    
-    // Format global categories to match the structure of regular categories
-    const formattedGlobalCategories = globalCategories.map(gc => {
-      const globalCat = globalCategoryMap.get(gc.categoryId.toString());
-      return {
-        _id: gc.categoryId,
-        name: gc.name,
-        description: globalCat?.description || "",
-        icon: globalCat?.icon || "",
-        businessId: businessId,
-        isActive: gc.isActive,
-        isDeleted: false,
-        isGlobal: true
-      };
-    });
-    
-    // Combine regular and global categories
-    const allCategories = [...categories, ...formattedGlobalCategories];
     
     // Create pagination metadata
     const paginationMeta = createPaginationMetadata(page, limit, totalCategories);
 
     return successResponse(res, "Categories fetched successfully", {
-      categories: allCategories,
+      categories: categories,
       pagination: paginationMeta
     });
   } catch (error: any) {
@@ -409,56 +369,113 @@ export const deleteCategories = async (req: Request, res: Response) => {
     }
 
     // Then validate access to all categories before making any changes
-    const categoriesToDeactivate = [];
+    const categoriesToDelete = [];
     
     for (const categoryId of categoryIds) {
       const existingCategory = await validateCategoryAccess(categoryId, businessId, res, session);
       if (!existingCategory) return; // validateCategoryAccess already handles the error response
       
-      categoriesToDeactivate.push({
+      categoriesToDelete.push({
         id: categoryId,
         name: (existingCategory as any).name
       });
     }
 
-    // Now deactivate all categories and their services
-    const deactivatedCategories = [];
-    let totalServicesDeactivated = 0;
+    // Now delete all categories and their services
+    const deletedCategories = [];
+    let totalServicesDeleted = 0;
+    let totalPackagesUpdated = 0;
     
-    for (const category of categoriesToDeactivate) {
-      // Set category to inactive instead of deleted
+    for (const category of categoriesToDelete) {
+      // Set category to deleted and inactive
       await Category.findByIdAndUpdate(
         category.id,
-        { $set: { isActive: false } },
+        { $set: { isDeleted: true, isActive: false } },
         { session }
       );
 
-      // Set all services in this category to inactive
-      const result = await Service.updateMany(
+      // Get all services in this category
+      const services = await Service.find({
+        categoryId: category.id,
+        businessId: businessId,
+        isDeleted: false
+      }, { _id: 1 }, { session });
+      
+      const serviceIds = services.map(service => service._id);
+
+      // Set all services in this category to deleted and inactive
+      const serviceResult = await Service.updateMany(
         {
           categoryId: category.id,
           businessId: businessId,
           isDeleted: false
         },
-        { $set: { isActive: false } },
+        { $set: { isDeleted: true, isActive: false } },
         { session }
       );
 
-      deactivatedCategories.push({
+      const packagesWithCategory = await Package.find({
+        businessId: businessId,
+        isDeleted: false,
+        "categories.categoryId": category.id
+      }, { _id: 1 }, { session });
+      
+      for (const pkg of packagesWithCategory) {
+        await Package.updateOne(
+          { _id: pkg._id },
+          { 
+            $pull: { 
+              categories: { categoryId: category.id },
+              services: { serviceId: { $in: serviceIds } }
+            } 
+          },
+          { session }
+        );
+      }
+      
+      const packagesWithServices = await Package.find({
+        businessId: businessId,
+        isDeleted: false,
+        "services.serviceId": { $in: serviceIds }
+      }, { _id: 1 }, { session });
+      
+      for (const pkg of packagesWithServices) {
+        await Package.updateOne(
+          { _id: pkg._id },
+          { 
+            $pull: { 
+              services: { serviceId: { $in: serviceIds } }
+            } 
+          },
+          { session }
+        );
+      }
+      
+      const uniquePackageIds = new Set([
+        ...packagesWithCategory.map((p) => (p._id as mongoose.Types.ObjectId).toString()),
+        ...packagesWithServices.map((p) => (p._id as mongoose.Types.ObjectId).toString())
+      ]);
+      
+      const packageUpdateCount = uniquePackageIds.size;
+      totalPackagesUpdated += packageUpdateCount;
+
+      deletedCategories.push({
         id: category.id,
         name: category.name,
-        servicesDeactivated: result.modifiedCount
+        servicesDeleted: serviceResult.modifiedCount,
+        packagesUpdated: packageUpdateCount
       });
       
-      totalServicesDeactivated += result.modifiedCount;
+      totalServicesDeleted += serviceResult.modifiedCount;
     }
 
     await session.commitTransaction();
     session.endSession();
 
-    return successResponse(res, "Categories and related services deactivated successfully", {
-      deactivatedCategories,
-      totalServicesDeactivated
+    return successResponse(res, "Categories and related services deleted successfully", {
+      deletedCategories,
+      totalServicesDeleted,
+      totalPackagesUpdated
     });
   } catch (error: any) {
     return handleTransactionError(session, error, res);

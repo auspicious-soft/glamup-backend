@@ -559,31 +559,6 @@ export const getCategoriesWithServices = async (req: Request, res: Response) => 
       isActive: true,
       isDeleted: false 
     }).sort({ name: 1 });
-
-    // Get business profile to access global categories
-    const businessProfile = await UserBusinessProfile.findOne({
-      _id: businessId,
-      isDeleted: false
-    });
-
-    // Get global categories - only active ones
-    const globalCategories = businessProfile?.selectedCategories?.filter(gc => gc.isActive) || [];
-    
-    // Get global category IDs
-    const globalCategoryIds = globalCategories.map(gc => gc.categoryId);
-    
-    // Fetch global category details including descriptions
-    const globalCategoryDetails = await mongoose.model("GlobalCategory").find({
-      _id: { $in: globalCategoryIds },
-      isActive: true,
-      isDeleted: false
-    });
-    
-    // Create a map for quick lookup
-    const globalCategoryMap = new Map();
-    globalCategoryDetails.forEach(gc => {
-      globalCategoryMap.set(gc._id.toString(), gc);
-    });
     
     // Get all team members for this business with only the needed fields
     const allTeamMembers = await TeamMember.find(
@@ -662,7 +637,7 @@ export const getCategoriesWithServices = async (req: Request, res: Response) => 
     };
     
     // Process regular categories with their services
-    const regularCategoriesWithServices = await Promise.all(
+    const categoriesWithServices = await Promise.all(
       categories.map(async (category) => {
         // Only get active services
         const services = await Service.find({
@@ -684,42 +659,9 @@ export const getCategoriesWithServices = async (req: Request, res: Response) => 
         };
       })
     );
-    
-    const globalCategoriesWithServices = await Promise.all(
-      globalCategories.map(async (globalCat) => {
-        // Only get active services
-        const services = await Service.find({
-          categoryId: globalCat.categoryId,
-          businessId: businessId,
-          isActive: true,
-          isDeleted: false
-        }).sort({ name: 1 });
-        
-        // Enhance services with essential team member data
-        const enhancedServices = services.map(enhanceServiceWithTeamMembers);
-        
-        // Get global category details
-        const globalCatDetails = globalCategoryMap.get(globalCat.categoryId.toString());
-
-        return {
-          _id: globalCat.categoryId,
-          name: globalCat.name,
-          description: globalCatDetails?.description || "",
-          icon: globalCatDetails?.icon || "",
-          isGlobal: true,
-          services: enhancedServices
-        };
-      })
-    );
-    
-    // Include all categories, even those with no services
-    const allCategoriesWithServices = [
-      ...regularCategoriesWithServices,
-      ...globalCategoriesWithServices
-    ];
 
     return successResponse(res, "Categories with services fetched successfully", {
-      categoriesWithServices: allCategoriesWithServices
+      categoriesWithServices: categoriesWithServices
     });
   } catch (error: any) {
     console.error("Error fetching categories with services:", error);

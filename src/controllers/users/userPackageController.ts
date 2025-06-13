@@ -25,6 +25,7 @@ import {
 import UserBusinessProfile from "../../models/business/userBusinessProfileSchema";
 import User from "../../models/user/userSchema";
 import RegisteredTeamMember from "../../models/registeredTeamMember/registeredTeamMemberSchema";
+import Category from "models/category/categorySchema";
 
 // Define the type for services used in packages
 interface ServiceForPackage {
@@ -362,10 +363,55 @@ export const getAllPackages = async (req: Request, res: Response) => {
       .skip(skip)
       .limit(limit);
 
+    // Filter out deleted categories and services from each package
+    const updatedPackages = await Promise.all(packages.map(async (pkg) => {
+      const packageObj = pkg.toObject ? pkg.toObject() : {...pkg};
+      
+      // Filter out categoryIds that have been deleted
+      if (packageObj.categoryIds && packageObj.categoryIds.length > 0) {
+        // Find which categoryIds still exist and are not deleted
+        const existingCategories = await Category.find(
+          {
+            _id: { $in: packageObj.categoryIds },
+            isDeleted: false
+          },
+          { _id: 1 }
+        ) as { _id: mongoose.Types.ObjectId }[];
+
+        const existingCategoryIds = new Set(existingCategories.map(cat => cat._id.toString()));
+
+        // Filter out deleted categoryIds
+        packageObj.categoryIds = packageObj.categoryIds.filter((catId: any) =>
+          existingCategoryIds.has(catId.toString())
+        );
+      }
+
+      // Filter out services that have been deleted
+      if (packageObj.services && packageObj.services.length > 0) {
+        // Get all service IDs from the package
+        const serviceIds = packageObj.services.map(svc => svc.serviceId);
+        
+        // Find which services still exist and are not deleted
+        const existingServices = await Service.find({
+          _id: { $in: serviceIds },
+          isDeleted: false
+        }, { _id: 1 }) as { _id: mongoose.Types.ObjectId }[];
+        
+        const existingServiceIds = new Set(existingServices.map(svc => svc._id.toString()));
+        
+        // Filter out deleted services
+        packageObj.services = packageObj.services.filter(svc => 
+          existingServiceIds.has(svc.serviceId.toString())
+        );
+      }
+      
+      return packageObj;
+    }));
+
     const paginationMeta = createPaginationMetadata(page, limit, totalPackages);
 
     return successResponse(res, "Packages fetched successfully", {
-      packages,
+      packages: updatedPackages,
       pagination: paginationMeta
     });
   } catch (error: any) {
@@ -435,6 +481,37 @@ export const getPackageById = async (req: Request, res: Response) => {
         res
       );
     }
+
+    // Filter out categoryIds that have been deleted
+    if (packageItem.categoryIds && packageItem.categoryIds.length > 0) {
+      // Find which categoryIds still exist and are not deleted
+      const existingCategories = await Category.find({
+        _id: { $in: packageItem.categoryIds },
+        isDeleted: false
+      }, { _id: 1 }) as { _id: mongoose.Types.ObjectId }[];
+
+      const existingCategoryIds = new Set(existingCategories.map(cat => cat._id.toString()));
+
+      // Filter out deleted categoryIds
+      packageItem.categoryIds = packageItem.categoryIds.filter((catId: any) =>
+        existingCategoryIds.has(catId.toString())
+      );
+    }
+    // Get all service IDs from the package
+    const serviceIds = packageItem.services.map(svc => svc.serviceId);
+    
+    // Find which services still exist and are not deleted
+    const existingServices = await Service.find({
+      _id: { $in: serviceIds },
+      isDeleted: false
+    }, { _id: 1 }) as { _id: mongoose.Types.ObjectId }[];
+    
+    const existingServiceIds = new Set(existingServices.map(svc => svc._id.toString()));
+    
+    // Filter out deleted services
+    packageItem.services = packageItem.services.filter(svc => 
+      existingServiceIds.has(svc.serviceId.toString())
+    );
 
     return successResponse(res, "Package fetched successfully", { package: packageItem });
   } catch (error: any) {
