@@ -151,6 +151,40 @@ export const uploadStreamToS3ofUser = async (
   }
 };
 
+export const uploadStreamToS3ofregisteredClients = async (
+  fileStream: Readable,
+  fileName: string,
+  fileType: string,
+  userEmail: string
+): Promise<string> => {
+  try {
+    const timestamp = Date.now();
+    const key = `Registered-Clients/${userEmail}/profile-pictures/${timestamp}-${fileName}`;
+
+    const chunks: any[] = [];
+    for await (const chunk of fileStream) {
+      chunks.push(chunk);
+    }
+    const buffer = Buffer.concat(chunks);
+
+    const s3Client = createS3Client();
+    const uploadParams = {
+      Bucket: AWS_BUCKET_NAME,
+      Key: key,
+      Body: buffer,
+      ContentType: fileType,
+    };
+
+    await s3Client.send(new PutObjectCommand(uploadParams));
+
+    return key;
+  } catch (error) {
+    console.error("Error uploading to S3:", error);
+    throw error;
+  }
+};
+
+
 export const uploadStreamToS3BusinessProfile = async (
   fileStream: Readable,
   fileName: string,

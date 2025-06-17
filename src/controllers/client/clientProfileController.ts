@@ -10,6 +10,74 @@ import RegisteredClient from "../../models/registeredClient/registeredClientSche
 import User from "../../models/user/userSchema";
 import { validateEmail } from "../../utils/user/usercontrollerUtils";
 import ClientAppointment from "../../models/clientAppointment/clientAppointmentSchema";
+import { getS3FullUrl, uploadStreamToS3ofregisteredClients } from "config/s3";
+import { Readable } from "stream";
+import Busboy from "busboy";
+import { DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { createS3Client } from "../../config/s3";
+
+const uploadProfilePictureToS3 = async (req: Request, userEmail: string): Promise<string | null> => {
+  return new Promise((resolve, reject) => {
+    if (!req.headers["content-type"]?.includes("multipart/form-data")) {
+      resolve(null);
+      return;
+    }
+
+    const busboy = Busboy({ headers: req.headers });
+    let uploadPromise: Promise<string> | null = null;
+
+    busboy.on(
+      "file",
+      async (fieldname: string, fileStream: any, fileInfo: any) => {
+        if (fieldname !== "profilePic") {
+          fileStream.resume(); 
+          return;
+        }
+
+        const { filename, mimeType } = fileInfo;
+
+        const readableStream = new Readable();
+        readableStream._read = () => {};
+
+        fileStream.on("data", (chunk: any) => {
+          readableStream.push(chunk);
+        });
+
+        fileStream.on("end", () => {
+          readableStream.push(null); 
+        });
+
+        uploadPromise = uploadStreamToS3ofregisteredClients(
+          readableStream,
+          filename,
+          mimeType,
+          userEmail
+        );
+      }
+    );
+
+    busboy.on("field", (fieldname, val) => {
+      if (!req.body) req.body = {};
+      req.body[fieldname] = val;
+    });
+
+    busboy.on("finish", async () => {
+      try {
+        if (uploadPromise) {
+          const imageKey = await uploadPromise;
+          const fullUrl = getS3FullUrl(imageKey);
+          resolve(fullUrl);
+        } else {
+          resolve(null);
+        }
+      } catch (error) {
+        reject(error);
+      }
+    });
+
+    req.pipe(busboy);
+  });
+};
 
 // Get client profile
 export const getClientProfile = async (req: Request, res: Response) => {
@@ -128,7 +196,6 @@ export const updateClientProfile = async (req: Request, res: Response) => {
       ? (req.user as any)._id
       : req.user;
     
-    
     const user = await User.findById(userId).session(session);
     
     if (!user) {
@@ -156,13 +223,62 @@ export const updateClientProfile = async (req: Request, res: Response) => {
       );
     }
     
+    // Handle profile picture upload if it's a multipart request
+    let profilePicUrl = client.profilePic;
+    let profilePicUpdated = false;
+    const isDummyImage = profilePicUrl.includes("dummyClientPicture.png");
+    
+    if (req.headers["content-type"]?.includes("multipart/form-data")) {
+      try {
+        // Upload new profile picture
+        const uploadResult = await uploadProfilePictureToS3(req, client.email);
+        
+        if (uploadResult) {
+          // If client already has a custom profile picture (not the default one),
+          // we should delete the old one from S3
+          if (!isDummyImage) {
+            try {
+              const s3Client = createS3Client();
+              // Extract the key from the full URL
+              const oldKey = profilePicUrl.split('amazonaws.com/')[1];
+              
+              if (oldKey && oldKey.startsWith('Registered-Clients/')) {
+                const deleteParams = {
+                  Bucket: process.env.AWS_BUCKET_NAME as string,
+                  Key: oldKey
+                };
+                
+                await s3Client.send(new DeleteObjectCommand(deleteParams));
+                console.log("Successfully deleted old client profile picture:", oldKey);
+              }
+            } catch (deleteError) {
+              console.error("Error deleting old profile picture:", deleteError);
+              // Continue with the update even if deletion fails
+            }
+          }
+          
+          profilePicUrl = uploadResult;
+          profilePicUpdated = true;
+          console.log("New client profile picture URL:", profilePicUrl);
+        }
+      } catch (uploadError) {
+        console.error("Error uploading profile picture:", uploadError);
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          "Error uploading profile picture",
+          httpStatusCode.INTERNAL_SERVER_ERROR,
+          res
+        );
+      }
+    }
+    
     const { 
       fullName, 
       email, 
       phoneNumber, 
       countryCode, 
-      countryCallingCode,
-      profilePicture
+      countryCallingCode
     } = req.body;
     
     const clientUpdateData: any = {};
@@ -209,9 +325,10 @@ export const updateClientProfile = async (req: Request, res: Response) => {
       userUpdateData.countryCallingCode = countryCallingCode;
     }
     
-    if (profilePicture !== undefined) {
-      clientUpdateData.profilePic = profilePicture;
-      userUpdateData.profilePic = profilePicture;
+    // Only update profile picture if the upload was successful
+    if (profilePicUpdated) {
+      clientUpdateData.profilePic = profilePicUrl;
+      userUpdateData.profilePic = profilePicUrl;
     }
     
     if (Object.keys(clientUpdateData).length === 0 && Object.keys(userUpdateData).length === 0) {
@@ -442,6 +559,7 @@ export const reactivateClientAccount = async (req: Request, res: Response) => {
     });
   }
 };
+
 
 
 

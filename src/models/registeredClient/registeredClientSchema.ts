@@ -10,6 +10,7 @@ _id?: mongoose.Types.ObjectId; // Add explicit _id type
   email: string;
   phoneNumber: string;
   countryCode: string;
+  countryCallingCode: string;
   password: string;
   isVerified: boolean;
   verificationMethod: "email" | "sms";
@@ -45,6 +46,11 @@ const registeredClientSchema = new mongoose.Schema(
       required: true,
       default: "+91",
     },
+     countryCallingCode: {
+      type: String,
+      required: true,
+      default: "IN", 
+    },
     password: { type: String, required: true },
 
     // Verification
@@ -66,7 +72,7 @@ const registeredClientSchema = new mongoose.Schema(
     // Profile & Preferences
     profilePic: {
       type: String,
-      default: "https://example.com/default-client.png",
+      default: "https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/dummyClientPicture.png",
     },
     languages: {
       type: [String],
