@@ -143,7 +143,7 @@ export const updateGlobalCategory = async (req: Request, res: Response) => {
   
   try {
     const { id } = req.params;
-    const { name, description, icon, isActive } = req.body;
+    const { name, description, icon, isActive, globalPicture } = req.body;
     
     const category = await GlobalCategory.findOne({
       _id: id,
@@ -186,6 +186,7 @@ export const updateGlobalCategory = async (req: Request, res: Response) => {
         ...(description !== undefined && { description }),
         ...(icon !== undefined && { icon }),
         ...(isActive !== undefined && { isActive }),
+        ...(globalPicture !==undefined && { globalPicture}),
       },
       { new: true, session }
     );

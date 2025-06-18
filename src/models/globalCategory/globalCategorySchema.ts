@@ -36,6 +36,10 @@ const globalCategorySchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    globalPicture:{
+      type:String,
+      default:""
+    }
   },
   {
     timestamps: true,
