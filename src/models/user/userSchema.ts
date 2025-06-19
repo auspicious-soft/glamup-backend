@@ -61,6 +61,10 @@ const userSchema = new mongoose.Schema({
       verificationToken: { type: String, default: null }
     },
 
+     otpResendAttempts: [{
+    timestamp: { type: Date, required: true },
+  }],
+
     // Flags
     isActive: {
       type: Boolean,

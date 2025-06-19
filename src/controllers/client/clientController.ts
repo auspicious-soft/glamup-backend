@@ -9,6 +9,7 @@ import Service from "../../models/services/servicesSchema";
 import Category from "models/category/categorySchema";
 import UserBusinessProfile from "models/business/userBusinessProfileSchema";
 import mongoose from "mongoose";
+import Appointment from "models/appointment/appointmentSchema";
 
 
 // Get all services for a specific business
@@ -294,6 +295,147 @@ export const getBusinessCategoryServices = async (req: Request, res: Response) =
   }
 };
 
+export const getBusinessesWithAppointments = async (req: Request, res: Response) => {
+  try {
+    // Fetch all businesses
+    const businesses = await UserBusinessProfile.find();
+
+    // Get appointment counts for each business
+    const appointmentCounts = await Appointment.aggregate([
+      {
+        $match: {
+          status: { $in: ["PENDING", "CONFIRMED"] }
+        }
+      },
+      {
+        $group: {
+          _id: "$businessId",
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Map counts to businessId for quick lookup
+    interface AppointmentCount {
+      _id: mongoose.Types.ObjectId;
+      count: number;
+    }
+
+    const countMap = appointmentCounts.reduce<Record<string, number>>((acc, curr: AppointmentCount) => {
+      acc[curr._id.toString()] = curr.count;
+      return acc;
+    }, {});
+
+    // Attach appointmentCount to each business
+    interface BusinessWithAppointmentCount extends ReturnType<typeof businesses[number]['toObject']> {
+      appointmentCount: number;
+    }
+
+    const result: BusinessWithAppointmentCount[] = businesses.map((business: typeof businesses[number]) => ({
+      ...business.toObject(),
+      appointmentCount: countMap[business._id.toString()] || 0
+    }));
+
+    result.sort((a, b) => b.appointmentCount - a.appointmentCount);
+    const topBusinesses = result.slice(0, 10); 
+    return successResponse(res, "Businesses with appointment counts fetched successfully", {
+      businesses: topBusinesses
+    });
+  } catch (error: any) {
+    console.error("Error fetching businesses with appointments:", error);
+    return errorResponseHandler(
+      "Failed to fetch businesses with appointments",
+      httpStatusCode.INTERNAL_SERVER_ERROR,
+      res
+    );
+  }
+};
 
 
+export const getRecommendedBusinesses = async (req: Request, res: Response) => {
+  try {
+    const { clientId } = req.params;
+
+  
+    if (!clientId || typeof clientId !== "string") {
+      return errorResponseHandler(
+        "Client ID is required and must be a string",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    // Aggregate appointments for the client, group by businessId, count, and sort
+    const appointmentCounts = await Appointment.aggregate([
+      {
+        $match: {
+          clientId: new mongoose.Types.ObjectId(clientId)
+        }
+      },
+      {
+        $group: {
+          _id: "$businessId",
+          count: { $sum: 1 }
+        }
+      },
+      {
+        $sort: { count: -1 }
+      },
+      {
+        $limit: 10
+      }
+    ]);
+
+    // If no appointments, return empty array
+    if (appointmentCounts.length === 0) {
+      return successResponse(res, "No recommended businesses found for client", {
+        businesses: []
+      });
+    }
+
+    // Fetch business details for the top businesses
+    const businessIds = appointmentCounts.map(a => a._id);
+    const businesses = await UserBusinessProfile.find({
+      _id: { $in: businessIds }
+    }).select(
+      "businessName businessProfilePic PhoneNumber countryCode email businessDescription " +
+      "websiteLink facebookLink instagramLink messengerLink country selectedCategories"
+    );
+
+    // Map counts to businessId for quick lookup
+    interface AppointmentCount {
+      _id: mongoose.Types.ObjectId;
+      count: number;
+    }
+
+    const countMap = appointmentCounts.reduce<Record<string, number>>((acc, curr: AppointmentCount) => {
+      acc[curr._id.toString()] = curr.count;
+      return acc;
+    }, {});
+
+    // Attach appointmentCount to each business
+    interface BusinessWithAppointmentCount extends ReturnType<typeof businesses[number]['toObject']> {
+      appointmentCount: number;
+    }
+
+    const result: BusinessWithAppointmentCount[] = businesses.map((business: typeof businesses[number]) => ({
+      ...business.toObject(),
+      appointmentCount: countMap[business._id.toString()] || 0
+    }));
+
+    // Sort by appointment count (descending) to maintain order from aggregation
+    result.sort((a, b) => b.appointmentCount - a.appointmentCount);
+
+    return successResponse(res, "Recommended businesses fetched successfully", {
+      businesses: result
+    });
+  } catch (error: any) {
+    console.error("Error fetching recommended businesses:", error);
+    return errorResponseHandler(
+      "Failed to fetch recommended businesses",
+      httpStatusCode.INTERNAL_SERVER_ERROR,
+      res
+    );
+  }
+};
 

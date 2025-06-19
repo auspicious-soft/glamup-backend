@@ -49,7 +49,21 @@ export const createClientAppointment = async (req: Request, res: Response) => {
       );
     }
     
-    // Check if business exists and is active
+
+    const appointmentDate = new Date(date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Reset time to start of day for comparison
+    
+    if (appointmentDate < today) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Cannot book appointments for past dates",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+    
     const business = await UserBusinessProfile.findOne({
       _id: businessId,
       status: "active",
@@ -134,7 +148,6 @@ export const createClientAppointment = async (req: Request, res: Response) => {
     }
     
     // Check if time slot is available
-    const appointmentDate = new Date(date);
     const isAvailable = await isTimeSlotAvailable(
       teamMemberId,
       appointmentDate,
@@ -356,6 +369,22 @@ export const getClientAppointments = async (req: Request, res: Response) => {
       .skip(skip)
       .limit(limitNum);
     
+    // Add timeStatus (Past/Upcoming) to each appointment
+    const currentDateTime = new Date();
+    const appointmentsWithTimeStatus = appointments.map(appointment => {
+      // Combine date and startTime for full appointment date-time
+      const appointmentDate = new Date(appointment.date);
+      const [hours, minutes] = appointment.startTime.split(':').map(Number);
+      appointmentDate.setHours(hours, minutes, 0, 0);
+      
+      // Determine if appointment is Past or Upcoming 
+      const timeStatus = appointmentDate < currentDateTime ? 'Past' : 'Upcoming';
+      return {
+        ...appointment.toObject(),
+        timeStatus
+      };
+    });
+    
     return successResponse(
       res,
       "Client appointments fetched successfully",
@@ -371,7 +400,7 @@ export const getClientAppointments = async (req: Request, res: Response) => {
           limit: limitNum,
           pages: Math.ceil(totalAppointments / limitNum)
         },
-        appointments
+        appointments: appointmentsWithTimeStatus
       }
     );
   } catch (error: any) {
@@ -718,3 +747,84 @@ export const rescheduleClientAppointment = async (req: Request, res: Response) =
   }
 };
 
+// Get upcoming appointments for a client
+export const getClientUpcomingAppointments = async (req: Request, res: Response) => {
+  try {
+    const { clientId } = req.params;
+    const { page = '1', limit = '10', sort = 'date' } = req.query;
+
+    // Validate client ID
+    if (!mongoose.Types.ObjectId.isValid(clientId)) {
+      return errorResponseHandler(
+        "Invalid client ID format",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    // Check if client exists
+    const client = await RegisteredClient.findById(clientId);
+    if (!client) {
+      return errorResponseHandler(
+        "Client not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    // Build query for upcoming appointments 
+    const query: any = {
+      clientId,
+      isDeleted: false,
+      status: { $in: ["PENDING", "CONFIRMED"] },
+      date: { $gte: new Date() }  
+    };
+
+    // Pagination
+    const pageNum = parseInt(page as string);
+    const limitNum = parseInt(limit as string);
+    const skip = (pageNum - 1) * limitNum;
+
+    // Sorting
+    let sortOption: any = { date: 1, startTime: 1 };
+    if (sort === '-date') {
+      sortOption = { date: -1, startTime: -1 };
+    }
+
+    // Get total count of upcoming appointments
+    const totalAppointments = await ClientAppointment.countDocuments(query);
+
+    // Get upcoming appointments
+    const appointments = await ClientAppointment.find(query)
+      .sort(sortOption)
+      .skip(skip)
+      .limit(limitNum);
+
+    return successResponse(
+      res,
+      "Client upcoming appointments fetched successfully",
+      {
+        client: {
+          _id: client._id,
+          name: client.fullName,
+          email: client.email
+        },
+        pagination: {
+          total: totalAppointments,
+          page: pageNum,
+          limit: limitNum,
+          pages: Math.ceil(totalAppointments / limitNum)
+        },
+        appointments
+      }
+    );
+  } catch (error: any) {
+    console.error("Error fetching client upcoming appointments:", error);
+    const parsedError = errorParser(error);
+    return errorResponseHandler(
+      parsedError.message,
+      parsedError.code,
+      res
+    );
+  }
+};

@@ -2,14 +2,17 @@ import express from "express";
 import { 
   getBusinessServices, 
   getBusinessCategoriesWithServices, 
-  getBusinessCategoryServices
+  getBusinessCategoryServices,
+  getBusinessesWithAppointments,
+  getRecommendedBusinesses
 } from "../controllers/client/clientController";
 import { 
   createClientAppointment, 
   getClientAppointments, 
   getClientAppointmentById, 
   cancelClientAppointment, 
-  rescheduleClientAppointment 
+  rescheduleClientAppointment, 
+  getClientUpcomingAppointments
 } from "../controllers/client/clientAppointmentController";
 import {
   getClientProfile,
@@ -17,7 +20,7 @@ import {
   deactivateClientAccount,
 } from "../controllers/client/clientProfileController";
 import { getBusinessesByGlobalCategory } from "controllers/globalCategory/globalCategoryController";
-import { clientAuthMiddleware } from "../middleware/clientAuthMiddleware";
+ 
 
 const router = express.Router();
 
@@ -29,10 +32,13 @@ router.get("/:categoryId/businesses", getBusinessesByGlobalCategory);
 
 // Client appointment routes (auth required)
 router.post("/appointment", createClientAppointment);
-router.get("/client/:clientId/appointments", getClientAppointments);
+router.get("/:clientId/appointments", getClientAppointments);
 router.get("/appointment/:appointmentId", getClientAppointmentById);
 router.post("/appointment/:appointmentId/cancel", cancelClientAppointment);
 router.post("/appointment/:appointmentId/reschedule", rescheduleClientAppointment);
+router.get("/upcoming-appointments/:clientId", getClientUpcomingAppointments)
+router.get("/businesses-with-appointments", getBusinessesWithAppointments )
+router.get("/recommended-businesses/:clientId",getRecommendedBusinesses)
 
 // Client profile routes (auth required)
 router.get("/profile", getClientProfile);

@@ -6,6 +6,7 @@ export interface IGlobalCategory {
   icon: string;
   isActive: boolean;
   isDeleted: boolean;
+  globalPicture: string;
   createdAt: Date;
   updatedAt: Date;
 }
