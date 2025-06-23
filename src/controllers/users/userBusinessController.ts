@@ -28,7 +28,8 @@ import {
   createS3Client, 
   getS3FullUrl, 
   uploadStreamToS3BusinessProfile, 
-  AWS_BUCKET_NAME 
+  AWS_BUCKET_NAME,
+  AWS_REGION
 } from "../../config/s3";
 import { DeleteObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import RegisteredTeamMember from "models/registeredTeamMember/registeredTeamMemberSchema";
@@ -90,24 +91,18 @@ const validateAndProcessGlobalCategories = async (
   }
 };
 
+
 const parseFormDataAndUpload = async (
   req: Request,
   businessEmail: string
-): Promise<{ formData: any; uploadResult: { key: string; fullUrl: string } | null }> => {
+): Promise<{ formData: any; uploadResults: { key: string; fullUrl: string }[] }> => {
   return new Promise((resolve, reject) => {
     const formData: any = {};
-    let uploadPromise: Promise<string> | null = null;
-
-    if (!req.headers["content-type"]?.includes("multipart/form-data")) {
-      resolve({ formData, uploadResult: null });
-      return;
-    }
-
+    const fileStreams: { stream: Readable; filename: string; mimeType: string }[] = [];
     const busboy = Busboy({ headers: req.headers });
 
     busboy.on("field", (fieldname, val) => {
       try {
-        // Parse JSON fields like arrays and objects
         if (["selectedCategories", "businessHours", "address"].includes(fieldname)) {
           try {
             formData[fieldname] = JSON.parse(val);
@@ -123,8 +118,8 @@ const parseFormDataAndUpload = async (
       }
     });
 
-    busboy.on("file", async (fieldname, fileStream, fileInfo) => {
-      if (fieldname !== "businessProfilePic") {
+    busboy.on("file", (fieldname, fileStream, fileInfo) => {
+      if (fieldname !== "businessProfilePic" && fieldname !== "businessProfilePic[]") {
         fileStream.resume();
         return;
       }
@@ -141,20 +136,26 @@ const parseFormDataAndUpload = async (
         readableStream.push(null);
       });
 
-      uploadPromise = uploadStreamToS3BusinessProfile(
-        readableStream,
-        filename,
-        mimeType,
-        businessEmail
-      );
+      fileStreams.push({ stream: readableStream, filename, mimeType });
     });
 
     busboy.on("finish", async () => {
       try {
-        const uploadResult = uploadPromise
-          ? { key: await uploadPromise, fullUrl: getS3FullUrl(await uploadPromise) }
-          : null;
-        resolve({ formData, uploadResult });
+        const emailForUpload = formData.email || businessEmail;
+        if (!emailForUpload) {
+          throw new Error("Email is required for S3 upload");
+        }
+
+        const uploadPromises = fileStreams.map(({ stream, filename, mimeType }) =>
+          uploadStreamToS3BusinessProfile(stream, filename, mimeType, emailForUpload)
+        );
+
+        const keys = await Promise.all(uploadPromises);
+        const uploadResults = keys.map((key) => ({
+          key,
+          fullUrl: getS3FullUrl(key),
+        }));
+        resolve({ formData, uploadResults });
       } catch (error) {
         reject(error);
       }
@@ -169,46 +170,41 @@ const parseFormDataAndUpload = async (
   });
 };
 
-const uploadProfilePictureToS3 = async (req: Request, businessEmail: string): Promise<{ key: string, fullUrl: string } | null> => {
+
+export const uploadProfilePictureToS3 = async (req: Request, businessEmail: string): Promise<{ key: string; fullUrl: string }[] | null> => {
   return new Promise((resolve, reject) => {
     if (!req.headers["content-type"]?.includes("multipart/form-data")) {
+      console.log("No multipart/form-data content-type, skipping upload");
       resolve(null);
       return;
     }
 
+    const fileStreams: { stream: Readable; filename: string; mimeType: string }[] = [];
     const busboy = Busboy({ headers: req.headers });
-    let uploadPromise: Promise<string> | null = null;
 
-    busboy.on(
-      "file",
-      async (fieldname: string, fileStream: any, fileInfo: any) => {
-        if (fieldname !== "businessProfilePic") {
-          fileStream.resume();
-          return;
-        }
-
-        const { filename, mimeType } = fileInfo;
-
-        const readableStream = new Readable();
-        readableStream._read = () => {};
-
-        fileStream.on("data", (chunk: any) => {
-          readableStream.push(chunk);
-        });
-
-        fileStream.on("end", () => {
-          readableStream.push(null);
-        });
-
-        // Use the provided business email
-        uploadPromise = uploadStreamToS3BusinessProfile(
-          readableStream,
-          filename,
-          mimeType,
-          businessEmail
-        );
+    busboy.on("file", (fieldname: string, fileStream: any, fileInfo: any) => {
+      if (fieldname !== "businessProfilePic" && fieldname !== "businessProfilePic[]") {
+        console.log(`Ignoring file with fieldname: ${fieldname}`);
+        fileStream.resume();
+        return;
       }
-    );
+
+      const { filename, mimeType } = fileInfo;
+      console.log(`Processing file: ${filename}, mimeType: ${mimeType}`);
+
+      const readableStream = new Readable();
+      readableStream._read = () => {};
+
+      fileStream.on("data", (chunk: any) => {
+        readableStream.push(chunk);
+      });
+
+      fileStream.on("end", () => {
+        readableStream.push(null);
+      });
+
+      fileStreams.push({ stream: readableStream, filename, mimeType });
+    });
 
     busboy.on("field", (fieldname, val) => {
       if (!req.body) req.body = {};
@@ -217,14 +213,24 @@ const uploadProfilePictureToS3 = async (req: Request, businessEmail: string): Pr
 
     busboy.on("finish", async () => {
       try {
-        if (uploadPromise) {
-          const imageKey = await uploadPromise;
-          const fullUrl = getS3FullUrl(imageKey);
-          resolve({ key: imageKey, fullUrl });
+        console.log(`Found ${fileStreams.length} files to upload`);
+        if (fileStreams.length > 0) {
+          const uploadPromises = fileStreams.map(({ stream, filename, mimeType }) =>
+            uploadStreamToS3BusinessProfile(stream, filename, mimeType, businessEmail)
+          );
+          const keys = await Promise.all(uploadPromises);
+          const uploadResults = keys.map((key) => ({
+            key,
+            fullUrl: getS3FullUrl(key),
+          }));
+          console.log("Upload results:", uploadResults);
+          resolve(uploadResults);
         } else {
+          console.log("No files uploaded");
           resolve(null);
         }
       } catch (error) {
+        console.error("Error in uploadProfilePictureToS3:", error);
         reject(error);
       }
     });
@@ -238,12 +244,12 @@ const uploadProfilePictureToS3 = async (req: Request, businessEmail: string): Pr
   });
 };
 
+
 // Business Profile functions
 export const createBusinessProfile = async (req: Request, res: Response) => {
   const session = await startSession();
 
   try {
-    // Only validate user authentication, not business access
     const userId = await validateUserAuth(req, res, session);
     if (!userId) {
       await session.abortTransaction();
@@ -261,9 +267,9 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       );
     }
 
-    // Extract email from request body or fallback to empty string
     const emailFromBody = req.body?.email || "";
-    const { formData, uploadResult } = await parseFormDataAndUpload(req, emailFromBody);
+    console.log(req.body?.email,"email")
+    const { formData, uploadResults } = await parseFormDataAndUpload(req, "");
 
     const {
       businessName,
@@ -280,12 +286,39 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       country,
       selectedCategories,
       businessHours,
+        coordinates,
     } = formData;
 
-    let businessProfilePic: string | undefined;
-    if (uploadResult) {
-      businessProfilePic = uploadResult.key;
+
+    let processedAddress = address;
+if (typeof processedAddress === "string") {
+  try {
+    processedAddress = JSON.parse(processedAddress);
+  } catch (e) {
+    processedAddress = {};
+  }
+}
+
+    if (!email) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Email is required",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
     }
+
+        const dummyProfilePicUrl = "https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/DummyBusinessProfilePic.png";
+
+
+let businessProfilePic: string[] = [];
+
+if (uploadResults && uploadResults.length > 0) {
+  businessProfilePic = uploadResults.map((img) => img.key);
+} else {
+  businessProfilePic = [dummyProfilePicUrl];
+}
 
     if (!businessName) {
       await session.abortTransaction();
@@ -305,6 +338,57 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
         httpStatusCode.BAD_REQUEST,
         res
       );
+    }
+
+let processedCoordinates = null;
+    if (coordinates) {
+      try {
+        const coords = JSON.parse(coordinates); 
+        const { latitude, longitude } = coords;
+
+        if (!latitude || !longitude) {
+          await session.abortTransaction();
+          session.endSession();
+          return errorResponseHandler(
+            "Coordinates must include latitude and longitude",
+            httpStatusCode.BAD_REQUEST,
+            res
+          );
+        }
+
+        const lat = parseFloat(latitude);
+        const lon = parseFloat(longitude);
+
+        if (
+          isNaN(lat) ||
+          isNaN(lon) ||
+          lat < -90 ||
+          lat > 90 ||
+          lon < -180 ||
+          lon > 180
+        ) {
+          await session.abortTransaction();
+          session.endSession();
+          return errorResponseHandler(
+            "Invalid coordinates provided",
+            httpStatusCode.BAD_REQUEST,
+            res
+          );
+        }
+
+        processedCoordinates = {
+          type: "Point",
+          coordinates: [lon, lat],
+        };
+      } catch (error) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          "Invalid coordinates format",
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
     }
 
     const existingBusiness = await findUserBusiness(userId, session);
@@ -385,30 +469,36 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       }
     }
 
-    const newBusinessProfile = await UserBusinessProfile.create(
-      [
-        {
-          businessName,
-          businessDescription,
-          PhoneNumber: phoneNumber,
-          countryCode,
-          countryCallingCode,
-          email,
-          websiteLink,
-          facebookLink,
-          instagramLink,
-          messengerLink,
-          businessProfilePic,
-          address,
-          country,
-          selectedCategories: processedCategories,
-          businessHours: processedBusinessHours,
-          ownerId: userId,
-          status: "active",
-        },
-      ],
-      { session }
-    );
+
+
+
+
+
+const newBusinessProfile = await UserBusinessProfile.create(
+  [
+    {
+      businessName,
+      businessDescription,
+      PhoneNumber: phoneNumber,
+      countryCode,
+      countryCallingCode,
+      email,
+      websiteLink,
+      facebookLink,
+      instagramLink,
+      messengerLink,
+      businessProfilePic,
+      address: processedAddress,
+      country,
+      coordinates: processedCoordinates, 
+      selectedCategories: processedCategories,
+      businessHours: processedBusinessHours,
+      ownerId: userId,
+      status: "active",
+    },
+  ],
+  { session }
+);
 
     await User.findByIdAndUpdate(
       userId,
@@ -419,12 +509,15 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
     await session.commitTransaction();
     session.endSession();
 
-    const responseData = {
-      businessProfile: {
-        ...newBusinessProfile[0].toObject(),
-        businessProfilePicUrl: businessProfilePic ? getS3FullUrl(businessProfilePic) : undefined,
-      },
-    };
+  const responseData = {
+    businessProfile: {
+      ...newBusinessProfile[0].toObject(),
+     businessProfilePic: businessProfilePic.map(url => 
+  url === dummyProfilePicUrl ? url : getS3FullUrl(url)
+),
+      coordinates: processedCoordinates
+    },
+  };
 
     return successResponse(
       res,
@@ -534,27 +627,27 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       );
     }
 
-    // Handle profile picture upload if it's a multipart request
-    let businessProfilePic = existingProfile.businessProfilePic;
+    // Handle profile picture uploads if it's a multipart request
+    let businessProfilePic = existingProfile.businessProfilePic || [];
+    let imagesUploaded = false;
     if (req.headers["content-type"]?.includes("multipart/form-data")) {
       try {
-        const isDummyImage = businessProfilePic.includes("DummyBusinessProfilePic.png");
+        const isDummyImage = businessProfilePic.includes("https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/DummyBusinessProfilePic.png");
         const businessEmail = existingProfile.email || userId.toString();
-        
+
         const s3Client = createS3Client();
         const folderPrefix = `business-profiles/${businessEmail}/profile-pictures/`;
-        
+
         let folderExists = false;
-        if (!isDummyImage) {
+        if (!isDummyImage && businessProfilePic.length > 0) {
           folderExists = true;
         } else {
           try {
             const listParams = {
               Bucket: AWS_BUCKET_NAME,
               Prefix: folderPrefix,
-              MaxKeys: 1
+              MaxKeys: 1,
             };
-            
             const listResult = await s3Client.send(new ListObjectsV2Command(listParams));
             folderExists = !!(listResult.Contents && listResult.Contents.length > 0);
           } catch (error) {
@@ -562,31 +655,40 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
             folderExists = false;
           }
         }
-        
-        const uploadResult = await uploadProfilePictureToS3(req, businessEmail);
-        
-        if (uploadResult) {
-          if (!isDummyImage) {
+
+        const uploadResults = await uploadProfilePictureToS3(req, businessEmail);
+
+        if (uploadResults && uploadResults.length > 0) {
+          imagesUploaded = true;
+          // Delete old images if they exist and are not the dummy image
+          if (!isDummyImage && businessProfilePic.length > 0) {
             try {
-              const deleteParams = {
-                Bucket: AWS_BUCKET_NAME,
-                Key: businessProfilePic
-              };
-              
-              await s3Client.send(new DeleteObjectCommand(deleteParams));
+              const deletePromises = businessProfilePic.map((url) => {
+                // Extract key from full URL if necessary
+                const key = url.replace(`https://${AWS_BUCKET_NAME}.s3.${AWS_REGION}.amazonaws.com/`, "");
+                const deleteParams = {
+                  Bucket: AWS_BUCKET_NAME,
+                  Key: key,
+                };
+                return s3Client.send(new DeleteObjectCommand(deleteParams));
+              });
+              await Promise.all(deletePromises);
+              console.log("Deleted old images from S3");
             } catch (deleteError) {
-              console.error("Error deleting old profile picture:", deleteError);
+              console.error("Error deleting old profile pictures:", deleteError);
             }
           }
-          
-          businessProfilePic = uploadResult.key;
+
+          // Update businessProfilePic with full S3 URLs
+          businessProfilePic = uploadResults.map((result) => result.fullUrl);
+          console.log("New businessProfilePic (full URLs):", businessProfilePic);
         }
       } catch (uploadError: any) {
         console.error("Profile picture upload error:", uploadError);
         await session.abortTransaction();
         session.endSession();
         return errorResponseHandler(
-          "Unable to process profile image. Please try again with a different image or format.",
+          "Unable to process profile images. Please try again with different images or formats.",
           httpStatusCode.BAD_REQUEST,
           res
         );
@@ -610,6 +712,17 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       businessHours,
     } = req.body || {};
 
+
+    
+    let processedAddress = address;
+if (typeof processedAddress === "string") {
+  try {
+    processedAddress = JSON.parse(processedAddress);
+  } catch (e) {
+    processedAddress = {};
+  }
+}
+
     // Process categories
     let processedCategories: any = existingProfile.selectedCategories;
     if (
@@ -617,7 +730,6 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       Array.isArray(selectedCategories) &&
       selectedCategories.length > 0
     ) {
-      // Validate that all category IDs are valid ObjectIds
       for (const categoryId of selectedCategories) {
         if (!mongoose.Types.ObjectId.isValid(categoryId)) {
           await session.abortTransaction();
@@ -630,11 +742,10 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
         }
       }
 
-      // Check if all categories exist
       const categories = await GlobalCategory.find({
         _id: { $in: selectedCategories },
         isActive: true,
-        isDeleted: false
+        isDeleted: false,
       }).session(session);
 
       if (categories.length !== selectedCategories.length) {
@@ -647,65 +758,74 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
         );
       }
 
-      // Process categories
-      processedCategories = categories.map(category => ({
-        categoryId: category._id,
-        name: category.name
+      processedCategories = categories.map((category) => ({
+        categoryId: category._id as mongoose.Types.ObjectId,
+        name: category.name,
       }));
     }
 
-    // Process business hours
-    let processedBusinessHours = existingProfile.businessHours as unknown as BusinessHours;
-    if (businessHours && typeof businessHours === "object") {
-      const days = [
-        "monday",
-        "tuesday",
-        "wednesday",
-        "thursday",
-        "friday",
-        "saturday",
-        "sunday",
-      ];
-
-      for (const day of days) {
-        if (businessHours[day]) {
-          const dayData = businessHours[day];
-          const daySchedule: DaySchedule = {
-            isOpen:
-              dayData.isOpen !== undefined
-                ? dayData.isOpen
-                : processedBusinessHours[day].isOpen,
-            timeSlots: [],
-          };
-
-          if (dayData.timeSlots && Array.isArray(dayData.timeSlots)) {
-            for (const slot of dayData.timeSlots) {
-              if (slot.open && slot.close) {
-                daySchedule.timeSlots.push({
-                  open: slot.open,
-                  close: slot.close,
-                });
-              }
+ // Process business hours
+let processedBusinessHours = existingProfile.businessHours as unknown as BusinessHours;
+if (typeof businessHours === "string") {
+  try {
+    processedBusinessHours = JSON.parse(businessHours);
+    // Validate the parsed structure
+    const days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+    for (const day of days) {
+      if (processedBusinessHours[day]) {
+        const dayData = processedBusinessHours[day];
+        const daySchedule: DaySchedule = {
+          isOpen: dayData.isOpen !== undefined ? dayData.isOpen : processedBusinessHours[day].isOpen,
+          timeSlots: [],
+        };
+        if (dayData.timeSlots && Array.isArray(dayData.timeSlots)) {
+          for (const slot of dayData.timeSlots) {
+            if (slot.open && slot.close) {
+              daySchedule.timeSlots.push({ open: slot.open, close: slot.close });
             }
           }
-
-          if (
-            daySchedule.timeSlots.length === 0 &&
-            processedBusinessHours[day].timeSlots
-          ) {
-            daySchedule.timeSlots = processedBusinessHours[day].timeSlots;
-          }
-
-          processedBusinessHours[day] = daySchedule;
         }
+        if (daySchedule.timeSlots.length === 0 && processedBusinessHours[day].timeSlots) {
+          daySchedule.timeSlots = processedBusinessHours[day].timeSlots;
+        }
+        processedBusinessHours[day] = daySchedule;
       }
     }
+  } catch (e) {
+    console.error("Error parsing businessHours:", e);
+    processedBusinessHours = existingProfile.businessHours as unknown as BusinessHours;
+  }
+} else if (typeof businessHours === "object" && businessHours !== null) {
+  processedBusinessHours = businessHours;
+  // Validate the object structure
+  const days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+  for (const day of days) {
+    if (processedBusinessHours[day]) {
+      const dayData = processedBusinessHours[day];
+      const daySchedule: DaySchedule = {
+        isOpen: dayData.isOpen !== undefined ? dayData.isOpen : processedBusinessHours[day].isOpen,
+        timeSlots: [],
+      };
+      if (dayData.timeSlots && Array.isArray(dayData.timeSlots)) {
+        for (const slot of dayData.timeSlots) {
+          if (slot.open && slot.close) {
+            daySchedule.timeSlots.push({ open: slot.open, close: slot.close });
+          }
+        }
+      }
+      if (daySchedule.timeSlots.length === 0 && processedBusinessHours[day].timeSlots) {
+        daySchedule.timeSlots = processedBusinessHours[day].timeSlots;
+      }
+      processedBusinessHours[day] = daySchedule;
+    }
+  }
+}
 
     // Prepare update data
-    const updateData: any = {
+   const updateData: any = {
       ...(businessName && { businessName }),
       ...(businessDescription !== undefined && { businessDescription }),
-      ...(phoneNumber && { PhoneNumber: phoneNumber }),
+      ...(phoneNumber && { phoneNumber }),
       ...(countryCode && { countryCode }),
       ...(countryCallingCode && { countryCallingCode }),
       ...(email !== undefined && { email }),
@@ -713,11 +833,11 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       ...(facebookLink !== undefined && { facebookLink }),
       ...(instagramLink !== undefined && { instagramLink }),
       ...(messengerLink !== undefined && { messengerLink }),
-      ...(businessProfilePic !== existingProfile.businessProfilePic && { businessProfilePic }),
-      ...(address && { address }),
+      ...(imagesUploaded && { businessProfilePic }),
+      ...(address && { address: processedAddress }),
       ...(country !== undefined && { country }),
       ...(selectedCategories && { selectedCategories: processedCategories }),
-      ...(businessHours && { businessHours: processedBusinessHours }),
+...(businessHours && { businessHours: processedBusinessHours }),
     };
 
     // Update business profile
@@ -737,15 +857,17 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       );
     }
 
-    // Commit transaction
     await session.commitTransaction();
     session.endSession();
 
-    // Prepare response with full S3 URL
     const responseData = {
       businessProfile: {
         ...updatedProfile.toObject(),
-        businessProfilePicUrl: getS3FullUrl(updatedProfile.businessProfilePic),
+        businessProfilePic: updatedProfile.businessProfilePic.map((url) =>
+          url.includes("https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/DummyBusinessProfilePic.png")
+            ? url
+            : url
+        ),
       },
     };
 
@@ -757,8 +879,7 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
     );
   } catch (error: any) {
     console.error("Error in updateBusinessProfile:", error);
-    
-    // FIXED: Check if session is still in transaction before aborting
+
     if (session && session.inTransaction()) {
       try {
         await session.abortTransaction();
@@ -766,13 +887,11 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
         console.error("Error aborting transaction:", abortError);
       }
     }
-    
-    // Always end the session
+
     if (session) {
       session.endSession();
     }
-    
-    // Use direct response instead of handleTransactionError to avoid double response
+
     const parsedError = errorParser(error);
     return res.status(parsedError.code).json({
       success: false,
@@ -781,7 +900,6 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
   }
 };
 
-// Update business global categories - completely new implementation
 export const updateBusinessGlobalCategories = async (req: Request, res: Response) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -799,10 +917,10 @@ export const updateBusinessGlobalCategories = async (req: Request, res: Response
       );
     }
 
-    // Get the business profile directly without using validateBusinessProfileAccess
+    // Get the business profile
     const businessProfile = await UserBusinessProfile.findOne({
       ownerId: userId,
-      isDeleted: false
+      isDeleted: false,
     }).session(session);
 
     if (!businessProfile) {
@@ -829,16 +947,11 @@ export const updateBusinessGlobalCategories = async (req: Request, res: Response
 
     // Get current categories to track changes
     const currentCategories = businessProfile.selectedCategories || [];
-    const currentCategoryIds = currentCategories.map(cat => cat.categoryId.toString());
-    
-    interface ProcessedCategory {
-      categoryId: mongoose.Types.ObjectId;
-      name: string;
-    }
-    let processedCategories: ProcessedCategory[] = [];
-    interface NewCategoryIds extends Array<string> {}
-    let newCategoryIds: NewCategoryIds = [];
-    
+    const currentCategoryIds = currentCategories.map((cat) => cat.categoryId.toString());
+
+    let processedCategories: { categoryId: mongoose.Types.ObjectId; name: string }[] = [];
+    let newCategoryIds: string[] = [];
+
     // Only process categories if the array is not empty
     if (selectedCategories.length > 0) {
       // Validate that all category IDs are valid ObjectIds
@@ -858,7 +971,7 @@ export const updateBusinessGlobalCategories = async (req: Request, res: Response
       const categories = await GlobalCategory.find({
         _id: { $in: selectedCategories },
         isActive: true,
-        isDeleted: false
+        isDeleted: false,
       }).session(session);
 
       if (categories.length !== selectedCategories.length) {
@@ -872,16 +985,16 @@ export const updateBusinessGlobalCategories = async (req: Request, res: Response
       }
 
       // Process categories
-      processedCategories = categories.map(category => ({
+      processedCategories = categories.map((category) => ({
         categoryId: category._id as mongoose.Types.ObjectId,
-        name: category.name
+        name: category.name,
       }));
-      
-      newCategoryIds = processedCategories.map(cat => cat.categoryId.toString());
+
+      newCategoryIds = processedCategories.map((cat) => cat.categoryId.toString());
     }
 
     // Find categories that are being removed
-    const removedCategoryIds = currentCategoryIds.filter(id => !newCategoryIds.includes(id));
+    const removedCategoryIds = currentCategoryIds.filter((id) => !newCategoryIds.includes(id));
 
     // Update the business profile with new categories (or empty array)
     const updatedProfile = await UserBusinessProfile.findByIdAndUpdate(
@@ -902,25 +1015,23 @@ export const updateBusinessGlobalCategories = async (req: Request, res: Response
 
     // Handle services and packages for removed categories
     if (removedCategoryIds.length > 0) {
-      // Update services
       await Service.updateMany(
         {
           businessId: businessProfile._id,
           categoryId: { $in: removedCategoryIds },
           isGlobalCategory: true,
-          isDeleted: false
+          isDeleted: false,
         },
         { $set: { isActive: false } },
         { session }
       );
 
-      // Update packages
       await Package.updateMany(
         {
           businessId: businessProfile._id,
           categoryId: { $in: removedCategoryIds },
           isGlobalCategory: true,
-          isDeleted: false
+          isDeleted: false,
         },
         { $set: { isActive: false } },
         { session }
@@ -934,16 +1045,20 @@ export const updateBusinessGlobalCategories = async (req: Request, res: Response
     const responseData = {
       businessProfile: {
         ...updatedProfile.toObject(),
-        businessProfilePicUrl: updatedProfile.businessProfilePic 
-          ? getS3FullUrl(updatedProfile.businessProfilePic)
-          : null,
+        businessProfilePic: updatedProfile.businessProfilePic.map((url) =>
+          updatedProfile.businessProfilePic.includes(
+            "https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/DummyBusinessProfilePic.png"
+          )
+            ? url
+            : getS3FullUrl(url)
+        ),
       },
     };
 
     return successResponse(
       res,
-      selectedCategories.length === 0 
-        ? "All global categories have been removed from your business profile" 
+      selectedCategories.length === 0
+        ? "All global categories have been removed from your business profile"
         : "Business global categories updated successfully",
       responseData,
       httpStatusCode.OK
@@ -953,7 +1068,7 @@ export const updateBusinessGlobalCategories = async (req: Request, res: Response
       await session.abortTransaction();
     }
     session.endSession();
-    
+
     console.error("Error in updateBusinessGlobalCategories:", error);
     const parsedError = errorParser(error);
     return errorResponseHandler(
@@ -964,3 +1079,197 @@ export const updateBusinessGlobalCategories = async (req: Request, res: Response
   }
 };
 
+export const deleteBusinessProfileImage = async (req: Request, res: Response) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    // Log incoming request
+    console.log('Incoming request:', {
+      profileId: req.params.profileId,
+      imageKey: req.query.imageKey,
+      userId: req.user, // Assuming extractUserId attaches user to req
+    });
+
+    // Validate user authentication
+    const userId = extractUserId(req);
+    if (!userId) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Invalid user authentication",
+        httpStatusCode.UNAUTHORIZED,
+        res
+      );
+    }
+
+    // Validate profileId
+    const { profileId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(profileId)) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Invalid Business profile ID format",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    // Get imageKey from query parameter
+    const imageKey = req.query.imageKey as string;
+    if (!imageKey) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Image key is required",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    // Find existing business profile
+    const existingProfile = await UserBusinessProfile.findOne({
+      _id: profileId,
+      ownerId: userId,
+      isDeleted: false,
+    }).session(session);
+
+    if (!existingProfile) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Business profile not found or you don't have permission to modify it",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    // Log businessProfilePic for debugging
+    console.log('Current businessProfilePic:', existingProfile.businessProfilePic);
+
+    // Check if the imageKey (full URL) exists in businessProfilePic
+    if (!existingProfile.businessProfilePic.includes(imageKey)) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        `Image with URL ${imageKey} not found in business profile`,
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    // Prevent deletion of the dummy image
+    const dummyImageUrl = "https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/DummyBusinessProfilePic.png";
+    if (imageKey === dummyImageUrl) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Cannot delete the default dummy image",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    // Extract S3 key for deletion
+    let s3Key = imageKey;
+    const bucketUrlPrefix = `https://${AWS_BUCKET_NAME}.s3.eu-north-1.amazonaws.com/`;
+    if (imageKey.startsWith(bucketUrlPrefix)) {
+      s3Key = imageKey.replace(bucketUrlPrefix, '');
+      console.log(`Converted full URL to S3 key for deletion: ${s3Key}`);
+    } else {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Invalid image URL format",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    // Delete the image from S3
+    try {
+      const s3Client = createS3Client();
+      const deleteParams = {
+        Bucket: AWS_BUCKET_NAME,
+        Key: s3Key,
+      };
+      await s3Client.send(new DeleteObjectCommand(deleteParams));
+      console.log(`Successfully deleted image from S3: ${s3Key}`);
+    } catch (s3Error) {
+      console.error("Error deleting image from S3:", s3Error);
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Failed to delete image from S3",
+        httpStatusCode.INTERNAL_SERVER_ERROR,
+        res
+      );
+    }
+
+    // Update businessProfilePic by removing the deleted image URL
+    let updatedBusinessProfilePic = existingProfile.businessProfilePic.filter(
+      (url) => url !== imageKey
+    );
+
+    // If no images remain, set to dummy image
+    if (updatedBusinessProfilePic.length === 0) {
+      updatedBusinessProfilePic = [dummyImageUrl];
+    }
+
+    // Update the business profile in the database
+    const updatedProfile = await UserBusinessProfile.findByIdAndUpdate(
+      profileId,
+      { $set: { businessProfilePic: updatedBusinessProfilePic } },
+      { new: true, session }
+    );
+
+    if (!updatedProfile) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Failed to update business profile",
+        httpStatusCode.INTERNAL_SERVER_ERROR,
+        res
+      );
+    }
+
+    // Commit transaction
+    await session.commitTransaction();
+    session.endSession();
+
+    // Prepare response with array of full S3 URLs
+    const responseData = {
+      businessProfile: {
+        ...updatedProfile.toObject(),
+        businessProfilePic: updatedProfile.businessProfilePic,
+      },
+    };
+
+    return successResponse(
+      res,
+      "Image deleted successfully",
+      responseData,
+      httpStatusCode.OK
+    );
+  } catch (error: any) {
+    console.error("Error in deleteBusinessProfileImage:", error);
+
+    if (session && session.inTransaction()) {
+      try {
+        await session.abortTransaction();
+      } catch (abortError) {
+        console.error("Error aborting transaction:", abortError);
+      }
+    }
+
+    if (session) {
+      session.endSession();
+    }
+
+    const parsedError = errorParser(error);
+    return res.status(parsedError.code).json({
+      success: false,
+      message: parsedError.message || "An error occurred while deleting the image",
+    });
+  }
+};

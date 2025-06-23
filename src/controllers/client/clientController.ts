@@ -11,6 +11,18 @@ import UserBusinessProfile from "models/business/userBusinessProfileSchema";
 import mongoose from "mongoose";
 import Appointment from "models/appointment/appointmentSchema";
 
+const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+  const R = 6371; // Earth's radius in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c; // Distance in km
+};
+
 
 // Get all services for a specific business
 export const getBusinessServices = async (req: Request, res: Response) => {
@@ -439,3 +451,110 @@ export const getRecommendedBusinesses = async (req: Request, res: Response) => {
   }
 };
 
+// Get businesses within a specified radius
+
+export const getBusinessesWithinRadius = async (req: Request, res: Response) => {
+  try {
+    const { latitude, longitude, radius } = req.query;
+
+    if (!latitude || !longitude || !radius) {
+      return errorResponseHandler(
+        "Latitude, longitude, and radius are required query parameters",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    const lat = parseFloat(latitude as string);
+    const lon = parseFloat(longitude as string);
+    const rad = parseFloat(radius as string);
+
+    if (isNaN(lat) || isNaN(lon) || isNaN(rad)) {
+      return errorResponseHandler(
+        "Invalid latitude, longitude, or radius format",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+      return errorResponseHandler(
+        "Latitude must be between -90 and 90, and longitude between -180 and 180",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    if (rad < 0 || rad > 10000) {
+      return errorResponseHandler(
+        "Radius must be a positive number and less than 10000 km",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    // Use $geoNear aggregation for precise distance calculation
+    const businesses = await UserBusinessProfile.aggregate([
+      {
+        $geoNear: {
+          near: { type: "Point", coordinates: [lon, lat] },
+          distanceField: "calculatedDistance", // Store distance in meters
+          maxDistance: rad * 1000, // Radius in meters
+          spherical: true,
+          query: { status: "active", isDeleted: false },
+        },
+      },
+      {
+        $project: {
+          businessName: 1,
+          businessProfilePic: 1,
+          businessAddress: 1,
+          coordinates: 1,
+          calculatedDistance: { $divide: ["$calculatedDistance", 1000] }, // Convert to km
+        },
+      },
+      {
+        $limit: 50,
+      },
+    ]);
+
+    // Map businesses and add Haversine distance for verification
+    const businessesWithHaversine = businesses.map((business) => {
+      const businessLat = business.coordinates.coordinates[1];
+      const businessLon = business.coordinates.coordinates[0];
+      const haversineDist = haversineDistance(lat, lon, businessLat, businessLon);
+
+      return {
+        _id: business._id,
+        businessName: business.businessName,
+        businessProfilePic: business.businessProfilePic,
+        businessAddress: business.businessAddress,
+        coordinates: {
+          latitude: businessLat,
+          longitude: businessLon,
+        },
+        geodesicDistance: business.calculatedDistance,
+      };
+    });
+
+    return successResponse(
+      res,
+      "Businesses within radius fetched successfully",
+      {
+        businesses: businessesWithHaversine,
+        count: businesses.length,
+        radius: rad,
+        center: { latitude: lat, longitude: lon },
+      },
+      httpStatusCode.OK
+    );
+  } catch (error: any) {
+    console.error("Error fetching businesses within radius:", error);
+    const parsedError = errorParser(error);
+    return errorResponseHandler(
+      error.message,
+      error.code || httpStatusCode.INTERNAL_SERVER_ERROR,
+      res
+    );
+  }
+};

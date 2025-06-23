@@ -49,9 +49,9 @@ const userBusinessProfileSchema = new mongoose.Schema(
       trim: true,
     },
     businessProfilePic: {
-      type: String,
-      default: "https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/DummyBusinessProfilePic.png",
-    },
+    type: [String],
+    default: ["https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/DummyBusinessProfilePic.png"],
+  },
     PhoneNumber: {
       type: String,
       default: "",
@@ -96,6 +96,17 @@ const userBusinessProfileSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+     coordinates: {
+    type: {
+      type: String,
+      enum: ['Point'],
+      default: 'Point'
+    },
+    coordinates: {
+      type: [Number],
+      required: false
+    }
+  },
     selectedCategories: [{
       categoryId: {
         type: mongoose.Schema.Types.ObjectId,
@@ -111,36 +122,36 @@ const userBusinessProfileSchema = new mongoose.Schema(
         default: true
       }
     }],
-    businessHours: {
-      monday: { 
-        isOpen: { type: Boolean, default: true },
-        timeSlots: { type: [timeSlotSchema], default: [{ open: "09:00", close: "17:00" }] }
-      },
-      tuesday: { 
-        isOpen: { type: Boolean, default: true },
-        timeSlots: { type: [timeSlotSchema], default: [{ open: "09:00", close: "17:00" }] }
-      },
-      wednesday: { 
-        isOpen: { type: Boolean, default: true },
-        timeSlots: { type: [timeSlotSchema], default: [{ open: "09:00", close: "17:00" }] }
-      },
-      thursday: { 
-        isOpen: { type: Boolean, default: true },
-        timeSlots: { type: [timeSlotSchema], default: [{ open: "09:00", close: "17:00" }] }
-      },
-      friday: { 
-        isOpen: { type: Boolean, default: true },
-        timeSlots: { type: [timeSlotSchema], default: [{ open: "09:00", close: "17:00" }] }
-      },
-      saturday: { 
-        isOpen: { type: Boolean, default: true },
-        timeSlots: { type: [timeSlotSchema], default: [{ open: "09:00", close: "17:00" }] }
-      },
-      sunday: { 
-        isOpen: { type: Boolean, default: false },
-        timeSlots: { type: [timeSlotSchema], default: [{ open: "09:00", close: "17:00" }] }
-      },
-    },   
+      businessHours: {
+        monday: { 
+          isOpen: { type: Boolean, default: true },
+          timeSlots: { type: [timeSlotSchema], default: [{ open: "09:00", close: "17:00" }] }
+        },
+        tuesday: { 
+          isOpen: { type: Boolean, default: true },
+          timeSlots: { type: [timeSlotSchema], default: [{ open: "09:00", close: "17:00" }] }
+        },
+        wednesday: { 
+          isOpen: { type: Boolean, default: true },
+          timeSlots: { type: [timeSlotSchema], default: [{ open: "09:00", close: "17:00" }] }
+        },
+        thursday: { 
+          isOpen: { type: Boolean, default: true },
+          timeSlots: { type: [timeSlotSchema], default: [{ open: "09:00", close: "17:00" }] }
+        },
+        friday: { 
+          isOpen: { type: Boolean, default: true },
+          timeSlots: { type: [timeSlotSchema], default: [{ open: "09:00", close: "17:00" }] }
+        },
+        saturday: { 
+          isOpen: { type: Boolean, default: true },
+          timeSlots: { type: [timeSlotSchema], default: [{ open: "09:00", close: "17:00" }] }
+        },
+        sunday: { 
+          isOpen: { type: Boolean, default: false },
+          timeSlots: { type: [timeSlotSchema], default: [{ open: "09:00", close: "17:00" }] }
+        },
+      },   
     status: {
       type: String,
       enum: ["active", "inactive", "pending", "suspended"],
@@ -160,6 +171,9 @@ const userBusinessProfileSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+userBusinessProfileSchema.index({ coordinates: "2dsphere" });
+
 
 const UserBusinessProfile = mongoose.model("UserBusinessProfile", userBusinessProfileSchema);
 export default UserBusinessProfile;

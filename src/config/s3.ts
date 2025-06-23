@@ -11,11 +11,11 @@ configDotenv();
 
 const {
   AWS_ACCESS_KEY_ID,
-  AWS_REGION,
   AWS_SECRET_ACCESS_KEY,
 } = process.env;
 
 export const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME;
+export const AWS_REGION = process.env.AWS_REGION
 
 export const createS3Client = () => {
   return new S3Client({
