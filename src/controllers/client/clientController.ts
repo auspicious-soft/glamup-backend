@@ -8,7 +8,7 @@ import {
 import Service from "../../models/services/servicesSchema";
 import Category from "models/category/categorySchema";
 import UserBusinessProfile from "models/business/userBusinessProfileSchema";
-import mongoose from "mongoose";
+import mongoose, { startSession, Types } from "mongoose";
 import Appointment from "models/appointment/appointmentSchema";
 
 const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
@@ -558,3 +558,98 @@ export const getBusinessesWithinRadius = async (req: Request, res: Response) => 
     );
   }
 };
+
+export const getBusinessProfileById = async (req: Request, res:Response) =>{
+
+    const session = await startSession();
+  try {
+    const {businessId} = req.query;
+
+  if(!businessId){
+    return errorResponseHandler(
+      "Business Id is required",
+      httpStatusCode.BAD_REQUEST,
+      res
+    );
+  }
+  if (!Types.ObjectId.isValid(businessId as string)) {
+      return errorResponseHandler(
+        "Invalid Business Id format",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+  const businessProfile = await UserBusinessProfile.findOne({
+    _id:businessId,
+    isDeleted:false,
+    status:"active",
+  });
+
+  
+const categories = await Category.find({
+  businessId: businessId,
+  isDeleted: false,
+  isActive: true,
+  // Exclude global categories if you have a flag, e.g., isGlobal: false
+  $or: [{ isGlobal: { $exists: false } }, { isGlobal: false }]
+}).sort({ name: 1 });
+
+const categoryAndServices = [];
+
+for (const category of categories) {
+  const services = await Service.find({
+    categoryId: category._id,
+    businessId: businessId,
+    isDeleted: false,
+    isActive: true
+  }).sort({ name: 1 });
+
+  if (services.length > 0) {
+    categoryAndServices.push({
+      _id: category._id,
+      name: category.name,
+      description: category.description,
+      services: services.map(service => ({
+        _id: service._id,
+        name: service.name,
+        description: service.description,
+        duration: service.duration,
+        price: service.price,
+        priceType: service.priceType,
+        maxPrice: service.maxPrice,
+        currency: service.currency,
+        icon: service.icon,
+        tags: service.tags,
+        isActive: service.isActive
+      }))
+    });
+  }
+}
+
+
+  if(!businessProfile){
+      if (session && session.inTransaction()) {
+    await session.abortTransaction();
+    session.endSession();
+  }
+  errorResponseHandler(
+    "Business Profile Not Found.",
+    httpStatusCode.NOT_FOUND,
+    res
+  );
+  return null;
+}
+return successResponse(res, "Business Profile fetched Successfully.",{
+  businessProfile,
+  categoryAndServices,
+});
+  } catch (error: any) {
+     console.error("Error fetching business profile:", error);
+    return errorResponseHandler(
+      "Failed to fetch business profile",
+      httpStatusCode.INTERNAL_SERVER_ERROR,
+      res
+    );
+  }
+  
+}
