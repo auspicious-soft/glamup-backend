@@ -41,8 +41,8 @@ export interface IClientAppointment {
   businessPhone: string;
   
   // Service details
-  categoryId: mongoose.Types.ObjectId;
-  categoryName: string;
+  // categoryId: mongoose.Types.ObjectId;
+  // categoryName: string;
   services: AppointmentService[];
   package: AppointmentPackage | null;
   
@@ -120,10 +120,10 @@ const clientAppointmentSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
-    businessLogo: {
-      type: String,
-      default: "",
-    },
+  businessLogo: {
+  type: [String],
+  default: [],
+},
     businessAddress: {
       type: String,
       default: "",
@@ -134,15 +134,15 @@ const clientAppointmentSchema = new mongoose.Schema(
     },
     
     // Service details
-    categoryId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Category',
-      required: true,
-    },
-    categoryName: {
-      type: String,
-      required: true,
-    },
+    // categoryId: {
+    //   type: mongoose.Schema.Types.ObjectId,
+    //   ref: 'Category',
+    //   required: true,
+    // },
+    // categoryName: {
+    //   type: String,
+    //   required: true, 
+    // },
     services: [{
       serviceId: {
         type: mongoose.Schema.Types.ObjectId,

@@ -30,7 +30,6 @@ export const createClientAppointment = async (req: Request, res: Response) => {
       clientId, 
       businessId, 
       teamMemberId, 
-      categoryId, 
       serviceIds, 
       date, 
       startTime, 
@@ -38,8 +37,8 @@ export const createClientAppointment = async (req: Request, res: Response) => {
       notes
     } = req.body;
     
-    // Validate required fields
-    if (!clientId || !businessId || !teamMemberId || !categoryId || !serviceIds || !date || !startTime) {
+    // Validate required fields (categoryId removed)
+    if (!clientId || !businessId || !teamMemberId || !serviceIds || !date || !startTime) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
@@ -49,10 +48,9 @@ export const createClientAppointment = async (req: Request, res: Response) => {
       );
     }
     
-
     const appointmentDate = new Date(date);
     const today = new Date();
-    today.setHours(0, 0, 0, 0); // Reset time to start of day for comparison
+    today.setHours(0, 0, 0, 0);
     
     if (appointmentDate < today) {
       await session.abortTransaction();
@@ -110,28 +108,9 @@ export const createClientAppointment = async (req: Request, res: Response) => {
       );
     }
     
-    // Check if category exists
-    const category = await Category.findOne({
-      _id: categoryId,
-      businessId: businessId,
-      isActive: true,
-      isDeleted: false
-    });
-    
-    if (!category) {
-      await session.abortTransaction();
-      session.endSession();
-      return errorResponseHandler(
-        "Category not found or inactive",
-        httpStatusCode.NOT_FOUND,
-        res
-      );
-    }
-    
-    // Check if services exist and belong to the category and business
+    // Check if services exist and belong to the business (category check removed)
     const services = await Service.find({
       _id: { $in: serviceIds },
-      categoryId: categoryId,
       businessId: businessId,
       isActive: true,
       isDeleted: false
@@ -174,22 +153,18 @@ export const createClientAppointment = async (req: Request, res: Response) => {
     // Generate a unique appointment ID to link both records
     const uniqueAppointmentId = generateAppointmentId();
     
-    // Create client appointment
+    // Create client appointment (categoryId/categoryName removed)
     const clientAppointmentData = {
       appointmentId: uniqueAppointmentId,
       clientId: client._id,
       businessId: business._id,
       businessName: business.businessName,
-      businessLogo: business.businessProfilePic || "",
-      businessAddress: business.address
+businessLogo: business.businessProfilePic || [],      businessAddress: business.address
         ? [business.address.street, business.address.city, business.address.region, business.address.country]
             .filter(Boolean)
             .join(", ")
         : "",
       businessPhone: business.PhoneNumber || "",
-      
-      categoryId: category._id,
-      categoryName: category.name,
       
       services: services.map(service => ({
         serviceId: service._id,
@@ -220,9 +195,9 @@ export const createClientAppointment = async (req: Request, res: Response) => {
       }
     };
     
-    // Create business appointment (for business and team member views)
+    // Create business appointment (categoryId/categoryName removed)
     const businessAppointmentData = {
-      appointmentId: uniqueAppointmentId, // Same ID to link the records
+      appointmentId: uniqueAppointmentId,
       clientId: client._id,
       clientName: client.fullName,
       clientEmail: client.email,
@@ -239,9 +214,6 @@ export const createClientAppointment = async (req: Request, res: Response) => {
       endTime: finalEndTime,
       duration: totalDuration,
       
-      categoryId: category._id,
-      categoryName: category.name,
-      
       services: services.map(service => ({
         serviceId: service._id,
         name: service.name,
@@ -257,10 +229,8 @@ export const createClientAppointment = async (req: Request, res: Response) => {
       paymentStatus: "PENDING",
       status: "PENDING",
       
-      createdBy: business.ownerId, // Use business owner as creator
+      createdBy: business.ownerId,
       updatedBy: business.ownerId,
-      
-      // Add a reference to indicate this was created by a client
       createdVia: "client_booking"
     };
     

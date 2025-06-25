@@ -33,8 +33,8 @@ export interface IAppointment {
   startTime: string;
   endTime: string; 
   duration: number; 
-  categoryId: mongoose.Types.ObjectId;
-  categoryName: string;
+  // categoryId: mongoose.Types.ObjectId;
+  // categoryName: string;
   services: AppointmentService[];
   package: AppointmentPackage | null;
   totalPrice: number;
@@ -117,15 +117,15 @@ const appointmentSchema = new mongoose.Schema(
       required: true,
       min: 5,
     },
-    categoryId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Category',
-      required: true,
-    },
-    categoryName: {
-      type: String,
-      required: true,
-    },
+    // categoryId: {
+    //   type: mongoose.Schema.Types.ObjectId,
+    //   ref: 'Category',
+    //   required: true,
+    // },
+    // categoryName: {
+    //   type: String,
+    //   required: true,
+    // },
     services: [{
       serviceId: {
         type: mongoose.Schema.Types.ObjectId,

@@ -10,6 +10,7 @@ import Category from "models/category/categorySchema";
 import UserBusinessProfile from "models/business/userBusinessProfileSchema";
 import mongoose, { startSession, Types } from "mongoose";
 import Appointment from "models/appointment/appointmentSchema";
+import TeamMember from "models/team/teamMemberSchema";
 
 const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
   const R = 6371; // Earth's radius in km
@@ -363,7 +364,6 @@ export const getBusinessesWithAppointments = async (req: Request, res: Response)
   }
 };
 
-
 export const getRecommendedBusinesses = async (req: Request, res: Response) => {
   try {
     const { clientId } = req.params;
@@ -451,11 +451,9 @@ export const getRecommendedBusinesses = async (req: Request, res: Response) => {
   }
 };
 
-// Get businesses within a specified radius
-
 export const getBusinessesWithinRadius = async (req: Request, res: Response) => {
   try {
-    const { latitude, longitude, radius } = req.query;
+    const { latitude, longitude, radius, serviceOrVenue, date } = req.query;
 
     if (!latitude || !longitude || !radius) {
       return errorResponseHandler(
@@ -493,13 +491,13 @@ export const getBusinessesWithinRadius = async (req: Request, res: Response) => 
       );
     }
 
-    // Use $geoNear aggregation for precise distance calculation
-    const businesses = await UserBusinessProfile.aggregate([
+    // Step 1: Find all businesses within the radius
+    let geoBusinesses = await UserBusinessProfile.aggregate([
       {
         $geoNear: {
           near: { type: "Point", coordinates: [lon, lat] },
-          distanceField: "calculatedDistance", // Store distance in meters
-          maxDistance: rad * 1000, // Radius in meters
+          distanceField: "calculatedDistance",
+          maxDistance: rad * 1000, // Correct: km to meters
           spherical: true,
           query: { status: "active", isDeleted: false },
         },
@@ -510,7 +508,9 @@ export const getBusinessesWithinRadius = async (req: Request, res: Response) => 
           businessProfilePic: 1,
           businessAddress: 1,
           coordinates: 1,
-          calculatedDistance: { $divide: ["$calculatedDistance", 1000] }, // Convert to km
+          calculatedDistance: { $divide: ["$calculatedDistance", 1000] },
+          selectedCategories: 1,
+          businessHours: 1,
         },
       },
       {
@@ -518,31 +518,150 @@ export const getBusinessesWithinRadius = async (req: Request, res: Response) => 
       },
     ]);
 
-    // Map businesses and add Haversine distance for verification
-    const businessesWithHaversine = businesses.map((business) => {
-      const businessLat = business.coordinates.coordinates[1];
-      const businessLon = business.coordinates.coordinates[0];
-      const haversineDist = haversineDistance(lat, lon, businessLat, businessLon);
+    console.log("geoBusinesses:", geoBusinesses.length);
 
-      return {
-        _id: business._id,
-        businessName: business.businessName,
-        businessProfilePic: business.businessProfilePic,
-        businessAddress: business.businessAddress,
-        coordinates: {
-          latitude: businessLat,
-          longitude: businessLon,
+    // Step 2: Filter businesses by open status on the specified date
+    let filteredBusinesses = geoBusinesses;
+    if (date) {
+      const parsedDate = new Date(date as string);
+      if (isNaN(parsedDate.getTime())) {
+        return errorResponseHandler(
+          "Invalid date format",
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
+      const dayOfWeek = parsedDate.toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
+      filteredBusinesses = geoBusinesses.filter(business => {
+        const hours = business.businessHours?.[dayOfWeek];
+        return !hours || (hours.isOpen && Array.isArray(hours.timeSlots) && hours.timeSlots.length > 0);
+      });
+    }
+
+    console.log("filteredBusinesses:", filteredBusinesses.length);
+
+    // Step 3: If no serviceOrVenue, return all filtered businesses
+    if (!serviceOrVenue || typeof serviceOrVenue !== "string" || !serviceOrVenue.trim()) {
+      return successResponse(
+        res,
+        "Businesses within radius fetched successfully",
+        {
+          businesses: filteredBusinesses.map(business => ({
+            _id: business._id,
+            businessName: business.businessName,
+            businessProfilePic: business.businessProfilePic,
+            businessAddress: business.businessAddress,
+            coordinates: {
+              latitude: business.coordinates.coordinates[1],
+              longitude: business.coordinates.coordinates[0],
+            },
+            geodesicDistance: business.calculatedDistance,
+          })),
+          count: filteredBusinesses.length,
+          radius: rad,
+          center: { latitude: lat, longitude: lon },
         },
-        geodesicDistance: business.calculatedDistance,
-      };
-    });
+        httpStatusCode.OK
+      );
+    }
+
+    // Step 4: Search by businessName, category, or service
+    const searchValue = serviceOrVenue.trim();
+    const regex = new RegExp(searchValue, "i");
+    let businessIds = new Set<string>();
+
+    // Search by businessName
+    let matchedBusinesses = filteredBusinesses.filter(b =>
+      b.businessName?.toLowerCase().includes(searchValue.toLowerCase())
+    );
+    matchedBusinesses.forEach(b => businessIds.add(b._id.toString()));
+    console.log("matchedBusinesses (name):", matchedBusinesses.length);
+
+    // Search by service businessId
+    if (matchedBusinesses.length === 0) {
+      const services = await Service.find({
+        name: regex,
+        isActive: true,
+        isDeleted: false,
+      });
+      console.log("services found:", services.length, services.map(s => ({ name: s.name, businessId: s.businessId })));
+
+      const serviceBusinessIds = services
+        .filter(s => s.businessId)
+        .map(s => s.businessId.toString());
+      matchedBusinesses = filteredBusinesses.filter(business =>
+        serviceBusinessIds.includes(business._id.toString())
+      );
+      matchedBusinesses.forEach(b => businessIds.add(b._id.toString()));
+      console.log("matchedBusinesses (service businessId):", matchedBusinesses.length);
+    }
+
+    // Search by category name
+    if (matchedBusinesses.length === 0) {
+      const categories = await Category.find({
+        name: regex,
+        isActive: true,
+        isDeleted: false,
+      });
+      console.log("categories found:", categories.length, categories.map((c: any) => c.name));
+
+      const categoryIds = categories.map((c: any) => c._id.toString());
+      matchedBusinesses = filteredBusinesses.filter(business =>
+        business.selectedCategories?.some((gc: any) =>
+          categoryIds.includes(gc.categoryId?.toString()) || gc.name?.toLowerCase().includes(searchValue.toLowerCase())
+        )
+      );
+      matchedBusinesses.forEach(b => businessIds.add(b._id.toString()));
+      console.log("matchedBusinesses (category):", matchedBusinesses.length);
+    }
+
+    // Search by service category
+    if (matchedBusinesses.length === 0) {
+      const services = await Service.find({
+        name: regex,
+        isActive: true,
+        isDeleted: false,
+      });
+      console.log("services (category) found:", services.length, services.map(s => ({ name: s.name, categoryId: s.categoryId })));
+
+      const serviceCategoryIds = services
+        .filter(s => s.categoryId)
+        .map(s => s.categoryId.toString());
+      const categories = await Category.find({
+        _id: { $in: serviceCategoryIds },
+        isActive: true,
+        isDeleted: false,
+      });
+      const categoryIds = categories.map((c: any) => c._id.toString());
+      console.log("categories from services:", categories.length, categories.map(c => c.name));
+
+      matchedBusinesses = filteredBusinesses.filter(business =>
+        business.selectedCategories?.some((gc: any) => categoryIds.includes(gc.categoryId?.toString()))
+      );
+      matchedBusinesses.forEach(b => businessIds.add(b._id.toString()));
+      console.log("matchedBusinesses (service category):", matchedBusinesses.length);
+    }
+
+    // Step 5: Prepare unique businesses
+    const uniqueBusinesses = filteredBusinesses.filter(b => businessIds.has(b._id.toString()));
+    console.log("uniqueBusinesses:", uniqueBusinesses.length);
 
     return successResponse(
       res,
       "Businesses within radius fetched successfully",
       {
-        businesses: businessesWithHaversine,
-        count: businesses.length,
+        businesses: uniqueBusinesses.map(business => ({
+          _id: business._id,
+          businessName: business.businessName,
+          businessProfilePic: business.businessProfilePic,
+          businessAddress: business.businessAddress,
+          coordinates: {
+            latitude: business.coordinates.coordinates[1],
+            longitude: business.coordinates.coordinates[0],
+          },
+          geodesicDistance: business.calculatedDistance,
+        })),
+        count: uniqueBusinesses.length,
         radius: rad,
         center: { latitude: lat, longitude: lon },
       },
@@ -559,97 +678,164 @@ export const getBusinessesWithinRadius = async (req: Request, res: Response) => 
   }
 };
 
-export const getBusinessProfileById = async (req: Request, res:Response) =>{
-
-    const session = await startSession();
+export const getBusinessProfileById = async (req: Request, res: Response) => {
+  const session = await startSession();
   try {
-    const {businessId} = req.query;
+    const { businessId } = req.query;
 
-  if(!businessId){
-    return errorResponseHandler(
-      "Business Id is required",
-      httpStatusCode.BAD_REQUEST,
-      res
-    );
-  }
-  if (!Types.ObjectId.isValid(businessId as string)) {
+    if (!businessId) {
+      return errorResponseHandler(
+        "Business Id is required",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+    if (!Types.ObjectId.isValid(businessId as string)) {
       return errorResponseHandler(
         "Invalid Business Id format",
         httpStatusCode.BAD_REQUEST,
         res
       );
     }
-  const businessProfile = await UserBusinessProfile.findOne({
-    _id:businessId,
-    isDeleted:false,
-    status:"active",
-  });
-
-  
-const categories = await Category.find({
-  businessId: businessId,
-  isDeleted: false,
-  isActive: true,
-  // Exclude global categories if you have a flag, e.g., isGlobal: false
-  $or: [{ isGlobal: { $exists: false } }, { isGlobal: false }]
-}).sort({ name: 1 });
-
-const categoryAndServices = [];
-
-for (const category of categories) {
-  const services = await Service.find({
-    categoryId: category._id,
-    businessId: businessId,
-    isDeleted: false,
-    isActive: true
-  }).sort({ name: 1 });
-
-  if (services.length > 0) {
-    categoryAndServices.push({
-      _id: category._id,
-      name: category.name,
-      description: category.description,
-      services: services.map(service => ({
-        _id: service._id,
-        name: service.name,
-        description: service.description,
-        duration: service.duration,
-        price: service.price,
-        priceType: service.priceType,
-        maxPrice: service.maxPrice,
-        currency: service.currency,
-        icon: service.icon,
-        tags: service.tags,
-        isActive: service.isActive
-      }))
+    const businessProfile = await UserBusinessProfile.findOne({
+      _id: businessId,
+      isDeleted: false,
+      status: "active",
     });
-  }
-}
 
+    const categories = await Category.find({
+      businessId: businessId,
+      isDeleted: false,
+      isActive: true,
+      $or: [{ isGlobal: { $exists: false } }, { isGlobal: false }]
+    }).sort({ name: 1 });
 
-  if(!businessProfile){
+    const categoryAndServices = [];
+
+    for (const category of categories) {
+      const services = await Service.find({
+        categoryId: category._id,
+        businessId: businessId,
+        isDeleted: false,
+        isActive: true
+      }).sort({ name: 1 });
+
+      if (services.length > 0) {
+        const serviceWithTeamMembers = await Promise.all(services.map(async (service) => {
+          // Fetch only active and non-deleted team members
+          const teamMembers = await TeamMember.find({
+            _id: { $in: service.teamMembers.map(tm => tm.memberId) },
+            isActive: true,
+            isDeleted: false
+          }).select('profilePicture name email phoneNumber countryCode countryCallingCode ');
+
+          return {
+            _id: service._id,
+            name: service.name,
+            description: service.description,
+            duration: service.duration,
+            price: service.price,
+            priceType: service.priceType,
+            maxPrice: service.maxPrice,
+            currency: service.currency,
+            icon: service.icon,
+            tags: service.tags,
+            isActive: service.isActive,
+            teamMembers: teamMembers.map(tm => ({
+              memberId: tm._id,
+              name: tm.name,
+              profilePicture: tm.profilePicture,
+              email:tm.email,
+              phoneNumber:tm.phoneNumber,
+              countryCode:tm.countryCode,
+              countryCallingCode:tm.countryCallingCode,
+              _id: tm._id
+            }))
+          };
+        }));
+
+        categoryAndServices.push({
+          _id: category._id,
+          name: category.name,
+          description: category.description,
+          services: serviceWithTeamMembers
+        });
+      }
+    }
+
+    if (!businessProfile) {
       if (session && session.inTransaction()) {
-    await session.abortTransaction();
-    session.endSession();
-  }
-  errorResponseHandler(
-    "Business Profile Not Found.",
-    httpStatusCode.NOT_FOUND,
-    res
-  );
-  return null;
-}
-return successResponse(res, "Business Profile fetched Successfully.",{
-  businessProfile,
-  categoryAndServices,
-});
+        await session.abortTransaction();
+        session.endSession();
+      }
+      errorResponseHandler(
+        "Business Profile Not Found.",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+      return null;
+    }
+    return successResponse(res, "Business Profile fetched Successfully.", {
+      businessProfile,
+      categoryAndServices,
+    });
   } catch (error: any) {
-     console.error("Error fetching business profile:", error);
+    console.error("Error fetching business profile:", error);
     return errorResponseHandler(
       "Failed to fetch business profile",
       httpStatusCode.INTERNAL_SERVER_ERROR,
       res
     );
   }
-  
+}
+
+export const getTeamMembersByServices = async (req: Request, res: Response) => {
+  try {
+    const idsParam = req.query.ids;
+    const ids = typeof idsParam === "string" ? idsParam.split(',') : [];
+    
+    if (!ids || ids.length === 0) {
+      return errorResponseHandler(
+        "Service IDs are required to get Team Members.",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    const services = await Service.find({ _id: { $in: ids } }).populate("teamMembers") as Array<typeof Service.prototype>;
+
+    // Check if all requested IDs were found
+    const foundServiceIds = services.map(service => (service._id as mongoose.Types.ObjectId).toString());
+    const notFoundIds = ids.filter(id => !foundServiceIds.includes(id));
+
+    if (notFoundIds.length > 0) {
+      return errorResponseHandler(
+        `Services not found for IDs: ${notFoundIds.join(', ')}`,
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    const returnServices = services.map(service => ({
+      service: {
+        _id: service._id,
+        name: service.name
+      },
+      teamMember: service.teamMembers,
+    }));
+
+    return successResponse(
+      res,
+      "Services with Team Members fetched successfully.",
+      returnServices
+    );
+  } catch (error: any) {
+    console.error("Error fetching business services:", error);
+    const parsedError = errorParser(error);
+    return errorResponseHandler(
+      parsedError.message,
+      parsedError.code,
+      res
+    );
+  }
 }
