@@ -447,6 +447,7 @@ export const deactivateUserAccount = async (req: Request, res: Response) => {
       userId,
       { 
         isActive: false,
+        isDeleted:true,
         deactivatedAt: new Date()
       },
       { session }
@@ -535,6 +536,7 @@ export const reactivateUserAccount = async (req: Request, res: Response) => {
       user._id,
       { 
         isActive: true,
+        isDeleted:false,
         deactivatedAt: null
       },
       { session }

@@ -136,6 +136,7 @@ export const userSignUp = async (req: Request, res: Response) => {
       countryCode,
       countryCallingCode,
     } = req.body;
+
     const requiredFields = {
       fullName,
       email,
@@ -169,16 +170,21 @@ export const userSignUp = async (req: Request, res: Response) => {
       );
     }
 
-    const existingUser = await findUserByEmailOrPhone(email, phoneNumber);
-    if (existingUser) {
-      await session.abortTransaction();
-      session.endSession();
-      const message =
-        existingUser.email === email
-          ? "User with this email already exists"
-          : "User with this phone number already exists";
-      return errorResponseHandler(message, httpStatusCode.BAD_REQUEST, res);
-    }
+ const existingUser = await findUserByEmailOrPhone(email, phoneNumber);
+if (
+  existingUser &&
+  existingUser.isDeleted === false &&
+  existingUser.isActive === true
+) {
+  await session.abortTransaction();
+  session.endSession();
+  const message =
+    existingUser.email === email
+      ? "User with this email already exists"
+      : "User with this phone number already exists";
+  return errorResponseHandler(message, httpStatusCode.BAD_REQUEST, res);
+}
+
 
     const { otp, otpExpiry } = generateOTP();
     const { token: verificationToken, hashedToken: hashedVerificationToken } =
@@ -261,6 +267,13 @@ export const UserLogin = async (req: Request, res: Response) => {
     if (!user.isVerified) {
       return errorResponseHandler(
         "User is not verified",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+    if(user.isDeleted){
+        return errorResponseHandler(
+        "Your account has deactivated or deleted. Please reactivate it to Login",
         httpStatusCode.BAD_REQUEST,
         res
       );

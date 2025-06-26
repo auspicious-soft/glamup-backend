@@ -17,7 +17,7 @@ const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID!, process.env.TWILIO_
 export const findUserByEmailOrPhone = async (email?: string, phoneNumber?: string) => {
   if (!email && !phoneNumber) return null;
   
-  const query: any = {};
+  const query: any = { isDeleted: false, isActive: true };
   if (email && phoneNumber) {
     query.$or = [{ email }, { phoneNumber }];
   } else if (email) {

@@ -126,7 +126,7 @@ export const createAppointment = async (req: Request, res: Response) => {
       phoneNumber,
       countryCode: countryCode || "+91",
       countryCallingCode: countryCallingCode || "IN",
-      profilePicture: "",
+      profilePicture: "https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/dummyClientPicture.png",
       birthday: null,
       gender: "prefer_not_to_say",
       address: {
@@ -399,7 +399,8 @@ export const getAppointmentsByDate = async (req: Request, res: Response) => {
       businessId,
       req.query.teamMemberId as string,
       req.query.clientId as string,
-      req.query.categoryId as string,
+      // req.query.categoryId as string,
+      undefined,
       req.query.status as string,
       dateQuery
     );
@@ -422,7 +423,7 @@ export const getAppointmentsByDate = async (req: Request, res: Response) => {
     const appointments = await Appointment.find(query)
       .populate('clientId')
       .populate('teamMemberId')
-      .populate('categoryId')
+      // .populate('categoryId')
       .sort({ date: 1, startTime: 1 })
       .skip(pagination.skip)
       .limit(pagination.limit);

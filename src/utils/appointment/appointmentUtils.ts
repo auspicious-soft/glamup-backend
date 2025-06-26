@@ -10,6 +10,7 @@ import Business from "../../models/business/userBusinessProfileSchema";
 import { Response } from "express";
 import { errorResponseHandler } from "../../lib/errors/error-response-handler";
 import { httpStatusCode } from "../../lib/constant";
+import RegisteredTeamMember from "models/registeredTeamMember/registeredTeamMemberSchema";
 
 //  Validates business profile and returns business ID
 export const validateBusinessProfile = async (
@@ -273,13 +274,13 @@ export const buildAppointmentQuery = (
     query.categoryId = categoryId;
   }
   
-  if (status) {
-    const statusValidation = validateAppointmentStatus(status);
-    if (!statusValidation.valid) {
-      return { error: statusValidation.message };
-    }
-    query.status = status;
+ if (status !== undefined && status !== "") {
+  const statusValidation = validateAppointmentStatus(status);
+  if (!statusValidation.valid) {
+    return { error: statusValidation.message };
   }
+  query.status = status;
+}
   
   if (dateQuery) {
     if (dateQuery.error) {
@@ -294,9 +295,11 @@ export const buildAppointmentQuery = (
 // Prepares pagination parameters
 export const preparePagination = (page?: string, limit?: string): { skip: number; limit: number; page: number } => {
   const pageNum = parseInt(page || '1');
-  const limitNum = parseInt(limit || '10');
+  let limitNum = parseInt(limit || '20'); // Default to 20
+  if (isNaN(limitNum) || limitNum <= 0) limitNum = 20;
+  if (limitNum > 100) limitNum = 100; // Enforce max limit of 20
   const skip = (pageNum - 1) * limitNum;
-  
+
   return {
     skip,
     limit: limitNum,
