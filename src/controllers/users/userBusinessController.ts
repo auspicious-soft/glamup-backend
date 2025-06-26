@@ -315,7 +315,7 @@ if (typeof processedAddress === "string") {
 let businessProfilePic: string[] = [];
 
 if (uploadResults && uploadResults.length > 0) {
-  businessProfilePic = uploadResults.map((img) => img.key);
+businessProfilePic = uploadResults.map((img) => img.fullUrl);
 } else {
   businessProfilePic = [dummyProfilePicUrl];
 }

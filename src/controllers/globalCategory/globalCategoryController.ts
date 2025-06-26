@@ -327,7 +327,7 @@ export const getBusinessesByGlobalCategory = async (req: Request, res: Response)
     const businessProfiles = await UserBusinessProfile.find(query)
       .select(
         "businessName businessProfilePic PhoneNumber countryCode email businessDescription " +
-        "websiteLink facebookLink instagramLink messengerLink country "
+        "websiteLink facebookLink instagramLink messengerLink country address "
       )
       .sort({ createdAt: -1 })
       .skip(skip)
