@@ -683,7 +683,7 @@ export const getBusinessesWithinRadius = async (req: Request, res: Response) => 
 export const getBusinessProfileById = async (req: Request, res: Response) => {
   const session = await startSession();
   try {
-    const { businessId } = req.query;
+    const { businessId, clientId } = req.query;
 
     if (!businessId) {
       return errorResponseHandler(
@@ -704,6 +704,18 @@ export const getBusinessProfileById = async (req: Request, res: Response) => {
       isDeleted: false,
       status: "active",
     });
+
+    // --- FAVOURITE LOGIC ---
+    let isFavourite = false;
+    if (clientId && Types.ObjectId.isValid(clientId as string)) {
+      const client = await RegisteredClient.findById(clientId).select("favouriteBusinesses");
+      if (client && Array.isArray(client.favouriteBusinesses)) {
+        isFavourite = client.favouriteBusinesses.some(
+          (fav: any) => fav.businessId.toString() === businessId
+        );
+      }
+    }
+    // -----------------------
 
     const categories = await Category.find({
       businessId: businessId,
@@ -778,7 +790,10 @@ export const getBusinessProfileById = async (req: Request, res: Response) => {
       return null;
     }
     return successResponse(res, "Business Profile fetched Successfully.", {
-      businessProfile,
+      businessProfile: {
+        ...businessProfile.toObject(),
+        isFavourite // <-- include the key here
+      },
       categoryAndServices,
     });
   } catch (error: any) {
@@ -855,7 +870,7 @@ export const addFavouriteBusiness = async (req: Request, res: Response) => {
       );
     }
 
-     if (
+    if (
       !mongoose.Types.ObjectId.isValid(clientId) ||
       !mongoose.Types.ObjectId.isValid(businessId)
     ) {
@@ -865,7 +880,6 @@ export const addFavouriteBusiness = async (req: Request, res: Response) => {
       });
     }
 
-     
     // Find the client
     const client = await RegisteredClient.findById(clientId);
     if (!client) {
@@ -887,27 +901,31 @@ export const addFavouriteBusiness = async (req: Request, res: Response) => {
     }
 
     // Check if already in favourites
-    const alreadyFavourite = client.favouriteBusinesses.some(
+    const favIndex = client.favouriteBusinesses.findIndex(
       (fav: any) => fav.businessId.toString() === businessId
     );
-    if (alreadyFavourite) {
-      return successResponse(res, "Business already in favourites", {
-        favouriteBusinesses: client.favouriteBusinesses,
-      });
-    }
 
-    // Add to favourites
-    client.favouriteBusinesses.push({
-      businessId: business._id,
-      name: business.businessName,
-    });
+    let action = "";
+    if (favIndex !== -1) {
+      // If present, remove it (un-favourite)
+      client.favouriteBusinesses.splice(favIndex, 1);
+      action = "removed";
+    } else {
+      // If not present, add it (favourite)
+      client.favouriteBusinesses.push({
+        businessId: business._id,
+        name: business.businessName,
+      });
+      action = "added";
+    }
     await client.save();
 
-    return successResponse(res, "Business added to favourites", {
+    return successResponse(res, `Business ${action} to favourites`, {
       favouriteBusinesses: client.favouriteBusinesses,
+      action,
     });
   } catch (error: any) {
-    console.error("Error adding favourite business:", error);
+    console.error("Error updating favourite business:", error);
     return errorResponseHandler(
       error.message || "Internal server error",
       httpStatusCode.INTERNAL_SERVER_ERROR,

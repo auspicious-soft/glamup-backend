@@ -1114,13 +1114,11 @@ export const cancelAppointment = async (req: Request, res: Response) => {
   }
 };
 
-// Get all pending appointments for a business
 export const getPendingAppointments = async (req: Request, res: Response) => {
   try {
     const userId = await validateUserAuth(req, res);
     if (!userId) return;
 
-    // Get user to check role
     const user = await User.findById(userId);
     if (!user) {
       return errorResponseHandler(
@@ -1132,7 +1130,6 @@ export const getPendingAppointments = async (req: Request, res: Response) => {
 
     let businessId;
 
-    // If user is a team member, get business ID from team membership
     if (user.businessRole === "team-member") {
       const teamMembership = await RegisteredTeamMember.findOne({
         userId: userId,
@@ -1150,18 +1147,15 @@ export const getPendingAppointments = async (req: Request, res: Response) => {
 
       businessId = teamMembership.businessId;
     } else {
-      // For business owners, use the existing function
       businessId = await validateBusinessProfile(userId, res);
       if (!businessId) return;
     }
 
-    // Get pagination parameters
     const pagination = preparePagination(
       req.query.page as string,
       req.query.limit as string
     );
 
-    // Build date range query if date filters are provided
     let dateQuery = {};
     if (req.query.date || req.query.startDate || req.query.endDate) {
       dateQuery = buildDateRangeQuery(
@@ -1179,15 +1173,24 @@ export const getPendingAppointments = async (req: Request, res: Response) => {
       }
     }
 
-    // Build the query for pending appointments
+    const now = new Date();
+    const currentDate = now.toISOString().split('T')[0];
+    const currentTime = now.toTimeString().split(' ')[0]; 
+
     const query: any = {
       businessId: businessId,
       status: "PENDING",
       isDeleted: false,
+      $or: [
+        { date: { $gt: currentDate } }, 
+        {
+          date: currentDate, 
+          startTime: { $gte: currentTime }
+        }
+      ],
       ...dateQuery,
     };
 
-    // Add team member filter if provided
     if (
       req.query.teamMemberId &&
       mongoose.Types.ObjectId.isValid(req.query.teamMemberId as string)
@@ -1195,7 +1198,6 @@ export const getPendingAppointments = async (req: Request, res: Response) => {
       query.teamMemberId = req.query.teamMemberId;
     }
 
-    // Add client filter if provided
     if (
       req.query.clientId &&
       mongoose.Types.ObjectId.isValid(req.query.clientId as string)
@@ -1203,23 +1205,19 @@ export const getPendingAppointments = async (req: Request, res: Response) => {
       query.clientId = req.query.clientId;
     }
 
-    // Add source filter if provided (client_booking or business)
     if (req.query.source === "client") {
       query.createdVia = "client_booking";
     } else if (req.query.source === "business") {
       query.createdVia = { $ne: "client_booking" };
     }
 
-    // Count total pending appointments
     const totalAppointments = await Appointment.countDocuments(query);
 
-    // Get pending appointments with pagination
     const pendingAppointments = await Appointment.find(query)
-      .sort({ date: 1, startTime: 1 }) // Sort by date and time
+      .sort({ date: 1, startTime: 1 }) 
       .skip(pagination.skip)
       .limit(pagination.limit);
 
-    // Prepare pagination metadata
     const paginationMetadata = preparePaginationMetadata(
       totalAppointments,
       pagination
