@@ -2,6 +2,11 @@ import mongoose from "mongoose";
 import { customAlphabet } from "nanoid";
 const clientId = customAlphabet("0123456789abcdefghijklmnopqrstuvwxyz", 10);
 
+
+export interface FavBusinesses{
+  businessId:mongoose.Types.ObjectId;
+  name:string;
+}
 // Define TypeScript interfaces
 export interface IRegisteredClient {
 _id?: mongoose.Types.ObjectId; // Add explicit _id type
@@ -14,6 +19,7 @@ _id?: mongoose.Types.ObjectId; // Add explicit _id type
   password: string;
   isVerified: boolean;
   verificationMethod: "email" | "sms";
+  favouriteBusinesses:FavBusinesses[],
   isActive: boolean;
   isDeleted: boolean;
   profilePic: string;
@@ -52,7 +58,16 @@ const registeredClientSchema = new mongoose.Schema(
       default: "IN", 
     },
     password: { type: String, required: true },
-
+favouriteBusinesses: [{
+  businessId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "UserBusinessProfile", 
+  },
+  name: {
+    type: String,
+    required: true,
+  },
+}],
     // Verification
     isVerified: {
       type: Boolean,

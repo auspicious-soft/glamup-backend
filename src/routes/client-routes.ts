@@ -7,7 +7,9 @@ import {
   getRecommendedBusinesses,
   getBusinessesWithinRadius,
   getBusinessProfileById,
-  getTeamMembersByServices
+  getTeamMembersByServices,
+  addFavouriteBusiness,
+  getFavouriteBusinesses
 } from "../controllers/client/clientController";
 import { 
   createClientAppointment, 
@@ -45,6 +47,10 @@ router.get("/recommended-businesses/:clientId",getRecommendedBusinesses)
 router.get("/businesses-within-radius", getBusinessesWithinRadius)
 router.get("/business-by-id", getBusinessProfileById)
 router.get("/members-by-services", getTeamMembersByServices)
+router.post("/favourite-business", addFavouriteBusiness);
+router.get("/favourite-businesses/:clientId", getFavouriteBusinesses)
+
+
 // Client profile routes (auth required)
 router.get("/profile", getClientProfile);
 router.put("/profile", updateClientProfile);

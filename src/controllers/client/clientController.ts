@@ -11,6 +11,8 @@ import UserBusinessProfile from "models/business/userBusinessProfileSchema";
 import mongoose, { startSession, Types } from "mongoose";
 import Appointment from "models/appointment/appointmentSchema";
 import TeamMember from "models/team/teamMemberSchema";
+import RegisteredClient from "models/registeredClient/registeredClientSchema";
+import { validateUserAuth } from "utils/user/usercontrollerUtils";
 
 const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
   const R = 6371; // Earth's radius in km
@@ -839,3 +841,137 @@ export const getTeamMembersByServices = async (req: Request, res: Response) => {
     );
   }
 }
+
+export const addFavouriteBusiness = async (req: Request, res: Response) => {
+  try {
+    const { clientId, businessId } = req.body;
+
+    // Validate input
+    if (!clientId || !businessId) {
+      return errorResponseHandler(
+        "clientId and businessId are required",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+     if (
+      !mongoose.Types.ObjectId.isValid(clientId) ||
+      !mongoose.Types.ObjectId.isValid(businessId)
+    ) {
+      return res.status(404).json({
+        success: false,
+        message: "Client or Business not found",
+      });
+    }
+
+     
+    // Find the client
+    const client = await RegisteredClient.findById(clientId);
+    if (!client) {
+      return errorResponseHandler(
+        "Client not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    // Find the business
+    const business = await UserBusinessProfile.findById(businessId);
+    if (!business) {
+      return errorResponseHandler(
+        "Business not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    // Check if already in favourites
+    const alreadyFavourite = client.favouriteBusinesses.some(
+      (fav: any) => fav.businessId.toString() === businessId
+    );
+    if (alreadyFavourite) {
+      return successResponse(res, "Business already in favourites", {
+        favouriteBusinesses: client.favouriteBusinesses,
+      });
+    }
+
+    // Add to favourites
+    client.favouriteBusinesses.push({
+      businessId: business._id,
+      name: business.businessName,
+    });
+    await client.save();
+
+    return successResponse(res, "Business added to favourites", {
+      favouriteBusinesses: client.favouriteBusinesses,
+    });
+  } catch (error: any) {
+    console.error("Error adding favourite business:", error);
+    return errorResponseHandler(
+      error.message || "Internal server error",
+      httpStatusCode.INTERNAL_SERVER_ERROR,
+      res
+    );
+  }
+};
+
+
+export const getFavouriteBusinesses = async (req: Request, res: Response) => {
+  try {
+    // Get clientId from token
+   const { clientId } = req.params;
+
+    if (!clientId || !mongoose.Types.ObjectId.isValid(clientId)) {
+      return errorResponseHandler(
+        "Invalid or missing clientId",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+    // Find the client and get favouriteBusinesses array
+    const client = await RegisteredClient.findById(clientId);
+    if (!client) {
+      return errorResponseHandler(
+        "Client not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    const favouriteBusinessIds = client.favouriteBusinesses.map((fav: any) => fav.businessId);
+
+    if (!favouriteBusinessIds.length) {
+      return successResponse(res, "No favourite businesses found", []);
+    }
+
+    // Fetch business details for all favourite businesses
+    const businesses = await UserBusinessProfile.find({
+      _id: { $in: favouriteBusinessIds },
+      isDeleted: false,
+      status: "active"
+    }).select(
+      "_id businessName email businessProfilePic businessDescription PhoneNumber countryCode countryCallingCode"
+    );
+
+    // Format response as requested
+    const formatted = businesses.map(b => ({
+      _id: b._id,
+      name: b.businessName,
+      email: b.email,
+      profilePic: b.businessProfilePic,
+      description: b.businessDescription,
+      phoneNumber: b.PhoneNumber,
+      countryCode: b.countryCode,
+      callingCountryCode: b.countryCallingCode,
+    }));
+
+    return successResponse(res, "Favourite businesses fetched successfully", formatted);
+  } catch (error: any) {
+    return errorResponseHandler(
+      error.message || "Internal server error",
+      httpStatusCode.INTERNAL_SERVER_ERROR,
+      res
+    );
+  }
+};

@@ -153,6 +153,43 @@ export const createClientAppointment = async (req: Request, res: Response) => {
     // Generate a unique appointment ID to link both records
     const uniqueAppointmentId = generateAppointmentId();
     
+
+     // --- FIX: Find or create Client in business's Client collection ---
+    let businessClient = await (mongoose as any).models.Client.findOne({
+      phoneNumber: client.phoneNumber,
+      businessId: business._id,
+      isDeleted: false,
+    }).session(session);
+
+    if (!businessClient) {
+      businessClient = await (mongoose as any).models.Client.create([{
+        name: client.fullName,
+        email: client.email,
+        phoneNumber: client.phoneNumber,
+        countryCode: client.countryCode || "+91",
+        countryCallingCode: client.countryCallingCode || "IN",
+        profilePicture: client.profilePic || "",
+        // birthday: client.birthday || null, // Removed because 'birthday' does not exist on RegisteredClient
+        // gender: client.gender || "prefer_not_to_say",
+        // address: client.address || {
+        //   street: "",
+        //   city: "",
+        //   region: "",
+        //   country: "",
+        // },
+        notes: "",
+        tags: [],
+        businessId: business._id,
+        preferredServices: [],
+        preferredTeamMembers: [],
+        lastVisit: null,
+        isActive: true,
+        isDeleted: false,
+      }], { session });
+      businessClient = businessClient[0];
+    }
+
+
     // Create client appointment (categoryId/categoryName removed)
     const clientAppointmentData = {
       appointmentId: uniqueAppointmentId,
@@ -198,7 +235,7 @@ businessLogo: business.businessProfilePic || [],      businessAddress: business.
     // Create business appointment (categoryId/categoryName removed)
     const businessAppointmentData = {
       appointmentId: uniqueAppointmentId,
-      clientId: client._id,
+      clientId: businessClient._id,
       clientName: client.fullName,
       clientEmail: client.email,
       clientPhone: client.phoneNumber || "",
