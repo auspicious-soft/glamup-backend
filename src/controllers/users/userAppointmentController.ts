@@ -33,21 +33,43 @@ import Client from "models/client/clientSchema";
 import User from "models/user/userSchema";
 import RegisteredTeamMember from "models/registeredTeamMember/registeredTeamMemberSchema";
 
+
+// Helper function to calculate end time based on services duration
+const calculateEndTimeFromServices = async (startTime: string, serviceIds: string[]): Promise<string> => {
+  // Fetch all services to get their durations
+  const services = await Service.find({ _id: { $in: serviceIds } });
+  
+  // Calculate total duration in minutes
+  const totalDuration = services.reduce((total, service) => total + (service.duration || 0), 0);
+  
+  // Parse start time
+  const [hours, minutes] = startTime.split(':').map(Number);
+  let totalMinutes = hours * 60 + minutes + totalDuration;
+  
+  // Calculate end time
+  const endHours = Math.floor(totalMinutes / 60) % 24;
+  const endMinutes = totalMinutes % 60;
+  
+  // Format as HH:MM
+  return `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}`;
+};
+
+
 export const createAppointment = async (req: Request, res: Response) => {
   const session = await startSession();
-  
+
   try {
     const userId = await validateUserAuth(req, res, session);
     if (!userId) return;
-    
-    const { 
-      clientId, 
-      teamMemberId, 
-      startDate, 
-      endDate, 
-      startTime, 
+
+    const {
+      clientId,
+      teamMemberId,
+      startDate,
+      endDate,
+      startTime,
       endTime,
-      status, 
+      status,
       serviceIds,
       packageId,
       discount,
@@ -56,16 +78,16 @@ export const createAppointment = async (req: Request, res: Response) => {
       email,
       phoneNumber,
       countryCode,
-      countryCallingCode
+      countryCallingCode,
     } = req.body;
-    
+
     // Get business ID first as it's needed for both paths
     const businessId = await validateBusinessProfile(userId, res, session);
     if (!businessId) return;
-    
+
     // Handle new client creation if isNewClient is true
     let finalClientId = clientId;
-    
+
     if (isNewClient === true) {
       // Validate required fields for new client
       if (!name || !phoneNumber || !countryCallingCode || !countryCode) {
@@ -77,80 +99,76 @@ export const createAppointment = async (req: Request, res: Response) => {
           res
         );
       }
-      
- 
-  // Build query to check for existing clients with same phone number
-  const phoneQuery = {
-    phoneNumber,
-    businessId,
-    isDeleted: false
-  };
-  
-  // Check if client with same phone number exists
-  const existingClientByPhone = await Client.findOne(phoneQuery).session(session);
-  if (existingClientByPhone) {
-    await session.abortTransaction();
-    session.endSession();
-    return errorResponseHandler(
-      "A client with this phone number already exists in your business",
-      httpStatusCode.CONFLICT,
-      res
-    );
-  }
-  
-  // If email is provided, check for duplicate email
-  if (email && email.trim() !== '') {
-    const emailQuery = {
-      email,
-      businessId,
-      isDeleted: false
-    };
-    
-    const existingClientByEmail = await Client.findOne(emailQuery).session(session);
-    if (existingClientByEmail) {
-      await session.abortTransaction();
-      session.endSession();
-      return errorResponseHandler(
-        "A client with this email already exists in your business",
-        httpStatusCode.CONFLICT,
-        res
-      );
-    }
-  }
-  
-  // Create new client with minimal information
-  const newClient = await Client.create(
-    [{
-      name,
-      email: email || "",
-      phoneNumber,
-      countryCode: countryCode || "+91",
-      countryCallingCode: countryCallingCode || "IN",
-      profilePicture: "https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/dummyClientPicture.png",
-      birthday: null,
-      gender: "prefer_not_to_say",
-      address: {
-        street: "",
-        city: "",
-        region: "",
-        country: "",
-      },
-      notes: "",
-      tags: [],
-      businessId: businessId,
-      preferredServices: [],
-      preferredTeamMembers: [],
-      lastVisit: null,
-      isActive: true,
-      isDeleted: false,
-    }],
-    { session }
-  ) as unknown as typeof Client[];
-  
-  finalClientId = (newClient[0] as any)._id.toString();
-}
 
-// Validate and parse serviceIds
+      // Build query to check for existing clients with same phone number
+      const phoneQuery = {
+        phoneNumber,
+        businessId,
+        isDeleted: false,
+      };
+
+      // Check if client with same phone number exists
+      const existingClientByPhone = await Client.findOne(phoneQuery).session(session) as (typeof Client.prototype & { _id: mongoose.Types.ObjectId }) | null;
+      if (existingClientByPhone) {
+        // Update the name of the existing client
+        existingClientByPhone.name = name;
+        await existingClientByPhone.save({ session });
+        finalClientId = existingClientByPhone._id.toString();
+      } else {
+        // If email is provided, check for duplicate email
+        if (email && email.trim() !== '') {
+          const emailQuery = {
+            email,
+            businessId,
+            isDeleted: false,
+          };
+
+          const existingClientByEmail = await Client.findOne(emailQuery).session(session);
+          if (existingClientByEmail) {
+            await session.abortTransaction();
+            session.endSession();
+            return errorResponseHandler(
+              "A client with this email already exists in your business",
+              httpStatusCode.CONFLICT,
+              res
+            );
+          }
+        }
+
+        // Create new client with minimal information
+        const newClient = await Client.create(
+          [{
+            name,
+            email: email || "",
+            phoneNumber,
+            countryCode: countryCode || "+91",
+            countryCallingCode: countryCallingCode || "IN",
+            profilePicture: "",
+            birthday: null,
+            gender: "prefer_not_to_say",
+            address: {
+              street: "",
+              city: "",
+              region: "",
+              country: "",
+            },
+            notes: "",
+            tags: [],
+            businessId: businessId,
+            preferredServices: [],
+            preferredTeamMembers: [],
+            lastVisit: null,
+            isActive: true,
+            isDeleted: false,
+          }],
+          { session }
+        ) as unknown as typeof Client[];
+
+        finalClientId = (newClient[0] as any)._id.toString();
+      }
+    }
+
+    // Validate and parse serviceIds
     let parsedServiceIds: string[] = [];
     if (typeof serviceIds === 'string') {
       // Split comma-separated string and trim whitespace
@@ -182,7 +200,7 @@ export const createAppointment = async (req: Request, res: Response) => {
         );
       }
     }
-    
+
     // Validate required fields for appointment
     if (!finalClientId || !teamMemberId || !startDate || !startTime || !serviceIds || 
         (Array.isArray(serviceIds) && serviceIds.length === 0)) {
@@ -194,14 +212,14 @@ export const createAppointment = async (req: Request, res: Response) => {
         res
       );
     }
-    
+
     // Get the category from the first service - check both custom and global services
     let service;
     let categoryId;
-    
+
     // First try to find the service in business-specific services
     service = await Service.findById(serviceIds[0]).session(session);
-    
+
     // If not found, check in global services
     if (!service) {
       // Find in global services from the business's selected categories
@@ -215,10 +233,10 @@ export const createAppointment = async (req: Request, res: Response) => {
           res
         );
       }
-      
+
       // Get the business's selected global categories
       const selectedCategories = business.selectedCategories || [];
-      
+
       // Find the global service within the selected categories
       for (const catId of selectedCategories) {
         const category = await Category.findById(catId).populate('services').session(session);
@@ -227,7 +245,7 @@ export const createAppointment = async (req: Request, res: Response) => {
           const globalService = categoryServices.find(
             (s: any) => s._id.toString() === serviceIds[0]
           );
-          
+
           if (globalService) {
             service = globalService;
             categoryId = catId;
@@ -238,7 +256,7 @@ export const createAppointment = async (req: Request, res: Response) => {
     } else {
       categoryId = service.categoryId;
     }
-    
+
     if (!service) {
       await session.abortTransaction();
       session.endSession();
@@ -248,7 +266,7 @@ export const createAppointment = async (req: Request, res: Response) => {
         res
       );
     }
-    
+
     if (!categoryId) {
       await session.abortTransaction();
       session.endSession();
@@ -258,10 +276,10 @@ export const createAppointment = async (req: Request, res: Response) => {
         res
       );
     }
-    
+
     // Check if the team member is available at the requested time
     const finalEndTime = endTime || await calculateEndTimeFromServices(startTime, serviceIds);
-    
+
     // Pass clientId to check for duplicate bookings by the same client
     const isAvailable = await isTimeSlotAvailable(
       teamMemberId,
@@ -271,7 +289,7 @@ export const createAppointment = async (req: Request, res: Response) => {
       finalEndTime,
       finalClientId
     );
-    
+
     if (!isAvailable) {
       await session.abortTransaction();
       session.endSession();
@@ -281,7 +299,7 @@ export const createAppointment = async (req: Request, res: Response) => {
         res
       );
     }
-    
+
     const validationResult = await validateAppointmentEntities(
       finalClientId,
       teamMemberId,
@@ -294,7 +312,7 @@ export const createAppointment = async (req: Request, res: Response) => {
       undefined,
       session
     );
-    
+
     if (!validationResult.valid) {
       await session.abortTransaction();
       session.endSession();
@@ -304,7 +322,7 @@ export const createAppointment = async (req: Request, res: Response) => {
         res
       );
     }
-    
+
     const appointmentData = prepareAppointmentData(
       validationResult.client,
       validationResult.teamMember,
@@ -321,15 +339,15 @@ export const createAppointment = async (req: Request, res: Response) => {
       discount || 0,
       new mongoose.Types.ObjectId(userId)
     );
-    
+
     const newAppointment = await Appointment.create(
       [appointmentData],
       { session }
     );
-    
+
     await session.commitTransaction();
     session.endSession();
-    
+
     return successResponse(
       res,
       "Appointment created successfully",
@@ -399,7 +417,6 @@ export const getAppointmentsByDate = async (req: Request, res: Response) => {
       businessId,
       req.query.teamMemberId as string,
       req.query.clientId as string,
-      // req.query.categoryId as string,
       undefined,
       req.query.status as string,
       dateQuery
@@ -423,7 +440,6 @@ export const getAppointmentsByDate = async (req: Request, res: Response) => {
     const appointments = await Appointment.find(query)
       .populate('clientId')
       .populate('teamMemberId')
-      // .populate('categoryId')
       .sort({ date: 1, startTime: 1 })
       .skip(pagination.skip)
       .limit(pagination.limit);
@@ -1017,25 +1033,6 @@ export const cancelAppointment = async (req: Request, res: Response) => {
   }
 };
 
-// Helper function to calculate end time based on services duration
-const calculateEndTimeFromServices = async (startTime: string, serviceIds: string[]): Promise<string> => {
-  // Fetch all services to get their durations
-  const services = await Service.find({ _id: { $in: serviceIds } });
-  
-  // Calculate total duration in minutes
-  const totalDuration = services.reduce((total, service) => total + (service.duration || 0), 0);
-  
-  // Parse start time
-  const [hours, minutes] = startTime.split(':').map(Number);
-  let totalMinutes = hours * 60 + minutes + totalDuration;
-  
-  // Calculate end time
-  const endHours = Math.floor(totalMinutes / 60) % 24;
-  const endMinutes = totalMinutes % 60;
-  
-  // Format as HH:MM
-  return `${endHours.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}`;
-};
 
 // Get all pending appointments for a business
 export const getPendingAppointments = async (req: Request, res: Response) => {
