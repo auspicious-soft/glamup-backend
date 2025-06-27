@@ -155,7 +155,7 @@ export const createAppointment = async (req: Request, res: Response) => {
               phoneNumber,
               countryCode: countryCode || "+91",
               countryCallingCode: countryCallingCode || "IN",
-              profilePicture: "",
+              profilePicture: "https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/dummyClientPicture.png",
               birthday: null,
               gender: "prefer_not_to_say",
               address: {
