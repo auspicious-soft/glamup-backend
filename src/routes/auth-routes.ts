@@ -7,7 +7,8 @@ import {
   verifyResetPasswordOTP, 
   updatePassword, 
   userLogout,
-  joinExistingBusiness
+  joinExistingBusiness,
+  resendVerificationCode
 } from '../controllers/auth/userAuthController';
 import { reactivateUserAccount } from 'controllers/users/userProfileController';
 import { clientSignUp } from 'controllers/auth/clientAuthController';
@@ -20,6 +21,8 @@ const router = Router();
 
 router.post('/user/signup', userSignUp);
 router.post('/user/verify-otp', verifySignupOTP);
+router.post('/user/resend-otp', resendVerificationCode);
+
 
 router.post('/user/login', UserLogin);
 router.post("/user/logout",authMiddleware,userLogout)

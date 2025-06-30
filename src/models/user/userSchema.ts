@@ -62,6 +62,10 @@ const userSchema = new mongoose.Schema({
      otpResendAttempts: [{
     timestamp: { type: Date, required: true },
   }],
+   registrationExpiresAt: {
+        type: Date,
+        default: () => new Date(Date.now() + 10 * 60 * 1000), // 10 minutes from creation
+    },
 
     // Flags
     isActive: {
@@ -120,6 +124,15 @@ const userSchema = new mongoose.Schema({
     timestamps: true,
   }
 );
+
+userSchema.index(
+    { registrationExpiresAt: 1 },
+    {
+        expireAfterSeconds: 0,
+        partialFilterExpression: { isVerified: false },
+    }
+);
+
 
 const User = mongoose.model("User", userSchema);
 export default User;

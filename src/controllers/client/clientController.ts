@@ -969,7 +969,7 @@ export const getFavouriteBusinesses = async (req: Request, res: Response) => {
       isDeleted: false,
       status: "active"
     }).select(
-      "_id businessName email businessProfilePic businessDescription PhoneNumber countryCode countryCallingCode"
+      "_id businessName email businessProfilePic businessDescription PhoneNumber countryCode countryCallingCode address"
     );
 
     // Format response as requested
@@ -982,6 +982,7 @@ export const getFavouriteBusinesses = async (req: Request, res: Response) => {
       phoneNumber: b.PhoneNumber,
       countryCode: b.countryCode,
       callingCountryCode: b.countryCallingCode,
+      address:b.address,
     }));
 
     return successResponse(res, "Favourite businesses fetched successfully", formatted);

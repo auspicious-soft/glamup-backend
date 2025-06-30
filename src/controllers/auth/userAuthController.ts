@@ -25,6 +25,7 @@ import { uploadStreamToS3ofUser, getS3FullUrl } from "../../config/s3";
 import mongoose from "mongoose";
 import RegisteredTeamMember from "../../models/registeredTeamMember/registeredTeamMemberSchema";
 import UserBusinessProfile from "../../models/business/userBusinessProfileSchema";
+import RegisteredClient from "models/registeredClient/registeredClientSchema";
 
 // Helper function to handle file upload to S3
 const uploadProfilePictureToS3 = async (
@@ -206,6 +207,7 @@ if (
         expiresAt: otpExpiry,
         verificationToken: hashedVerificationToken,
       },
+       registrationExpiresAt: new Date(Date.now() + 10 * 60  * 1000), // 10 minutes from now
     });
 
     const token = generateJwtToken(newUser._id.toString());
@@ -394,6 +396,15 @@ export const verifySignupOTP = async (req: Request, res: Response) => {
       );
     }
 
+     if (user.registrationExpiresAt < new Date()) {
+      return errorResponseHandler(
+        "Registration expired. Please register again.",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+
     if (!user.otp || !user.otp.expiresAt || new Date() > user.otp.expiresAt) {
       return errorResponseHandler(
         "OTP has expired",
@@ -430,6 +441,20 @@ export const verifySignupOTP = async (req: Request, res: Response) => {
         verificationToken: null,
       },
     });
+
+     const client = await RegisteredClient.findOne({
+      $or: [{ email }, { phoneNumber }],
+    });
+
+    if (client) {
+      await RegisteredClient.findByIdAndUpdate(
+        client._id,
+        {
+          isVerified: true,
+        
+        }
+      );
+    }
 
     const updatedUser = await User.findById(user._id);
     if (!updatedUser) {
@@ -864,7 +889,17 @@ export const resendVerificationCode = async (req: Request, res: Response) => {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
-        "User is already verified",
+        `User is already verified. Please Login using this email - ${email} `,
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+      if (user.registrationExpiresAt < new Date()) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Registration expired. Please register again.",
         httpStatusCode.BAD_REQUEST,
         res
       );

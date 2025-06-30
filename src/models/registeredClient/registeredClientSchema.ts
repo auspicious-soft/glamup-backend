@@ -26,6 +26,7 @@ _id?: mongoose.Types.ObjectId; // Add explicit _id type
   languages: string[];
   authType: "email" | "google" | "apple";
   createdAt: Date;
+  registrationExpiresAt?: Date
   updatedAt: Date;
 }
 export interface IRegisteredClientDocument extends mongoose.Document, IRegisteredClient {
@@ -78,7 +79,10 @@ favouriteBusinesses: [{
       enum: ["email", "phone"],
       default: "email",
     },
-
+registrationExpiresAt: {
+      type: Date,
+      default: () => new Date(Date.now() + 10 * 60 * 1000), // 10 seconds for testing
+    },
     // Flags
     isActive: { type: Boolean, default: true },
 
@@ -101,6 +105,15 @@ favouriteBusinesses: [{
   },
   { timestamps: true }
 );
+
+registeredClientSchema.index(
+  { registrationExpiresAt: 1 },
+  {
+    expireAfterSeconds: 0,
+    partialFilterExpression: { isVerified: false },
+  }
+);
+
 
 const RegisteredClient = mongoose.model<IRegisteredClientDocument>(
   "RegisteredClient",

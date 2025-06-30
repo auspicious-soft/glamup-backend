@@ -186,6 +186,8 @@ export const clientSignUp = async (req: Request, res: Response) => {
       await generateVerificationToken();
     const hashedPassword = await hashPassword(password);
     
+        const registrationExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
     // Create new client in RegisteredClient table
     const newClient = await RegisteredClient.create(
       [
@@ -198,6 +200,7 @@ export const clientSignUp = async (req: Request, res: Response) => {
           countryCallingCode,
           profilePic: profilePicUrl || "https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/dummyClientPicture.png",
           profilePicKey: profilePicKey || "",
+            registrationExpiresAt,
         },
       ],
       { session }
@@ -221,6 +224,7 @@ export const clientSignUp = async (req: Request, res: Response) => {
             expiresAt: otpExpiry,
             verificationToken: hashedVerificationToken,
           },
+           registrationExpiresAt,
         },
       ],
       { session }
