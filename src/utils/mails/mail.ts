@@ -3,6 +3,10 @@ import { configDotenv } from "dotenv";
 import ForgotPasswordEmail from "./templates/forget-password";
 import LoginCredentials from "./templates/login-credentials";
 import VerifyEmail from "./templates/email-verification";
+import AppointmentBookedEmail from "./templates/appointment-booked";
+import AppointmentConfirmedEmail from "./templates/appointment-confirmed";
+import AppointmentCompletedEmail from "./templates/appointment-completed";
+import AppointmentCanceledEmail from "./templates/appointment-cancelled";
 configDotenv()
 
 const resend = new Resend(process.env.RESEND_API_KEY)

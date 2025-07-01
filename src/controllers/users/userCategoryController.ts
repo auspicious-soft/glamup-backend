@@ -30,14 +30,14 @@ import Package from "models/package/packageSchema";
 
 // Category functions
 export const createCategory = async (req: Request, res: Response) => {
-  const session = await startSession();
-
+ const session = await mongoose.startSession();
+  session.startTransaction();
   try {
     const businessId = await validateUserAndGetBusiness(req, res, session);
     if (!businessId) return;
 
     const { name, description } = req.body;
-    
+
     if (!name) {
       await session.abortTransaction();
       session.endSession();
@@ -47,9 +47,9 @@ export const createCategory = async (req: Request, res: Response) => {
         res
       );
     }
-    
+
     if (await checkDuplicateCategoryName(name, businessId, null, res, session)) return;
-    
+
     const newCategory = await Category.create(
       [
         {
@@ -57,8 +57,8 @@ export const createCategory = async (req: Request, res: Response) => {
           description: description || "",
           businessId: businessId,
           isActive: true,
-          isDeleted: false
-        }
+          isDeleted: false,
+        },
       ],
       { session }
     );
@@ -73,6 +73,8 @@ export const createCategory = async (req: Request, res: Response) => {
       httpStatusCode.CREATED
     );
   } catch (error: any) {
+    await session.abortTransaction();
+    session.endSession();
     return handleTransactionError(session, error, res);
   }
 };
@@ -559,5 +561,82 @@ export const getBusinessCategories = async (req: Request, res: Response) => {
       success: false,
       message: parsedError.message,
     });
+  }
+};
+
+export const swapCategoryOrder = async (req: Request, res: Response) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const businessId = await validateUserAndGetBusiness(req, res, session);
+    if (!businessId) return;
+
+    const { replacingCategoryId, replacedCategoryId } = req.body;
+
+    if (!replacingCategoryId || !replacedCategoryId) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Both replacingCategoryId and replacedCategoryId are required",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    if (!(await validateObjectId(replacingCategoryId, "Category", res, session))) return;
+    if (!(await validateObjectId(replacedCategoryId, "Category", res, session))) return;
+
+    const [replacingCategory, replacedCategory] = await Promise.all([
+      Category.findOne({ _id: replacingCategoryId, businessId, isDeleted: false }).session(session),
+      Category.findOne({ _id: replacedCategoryId, businessId, isDeleted: false }).session(session),
+    ]);
+
+    if (!replacingCategory || !replacedCategory) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "One or both categories not found or you don't have access",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    const replacingOriginalOrder = replacingCategory.sortingOrderNo;
+    const replacedOriginalOrder = replacedCategory.sortingOrderNo;
+
+    // Use a temporary value to avoid unique constraint violation
+    const tempOrder = -1 * Date.now(); 
+
+    replacingCategory.sortingOrderNo = tempOrder;
+    await replacingCategory.save({ session });
+
+    replacedCategory.sortingOrderNo = replacingOriginalOrder;
+    await replacedCategory.save({ session });
+
+    replacingCategory.sortingOrderNo = replacedOriginalOrder;
+    await replacingCategory.save({ session });
+
+    await session.commitTransaction();
+    session.endSession();
+
+    return successResponse(res, "Category order swapped successfully", {
+      updatedCategories: [
+        {
+          _id: replacingCategory._id,
+          name: replacingCategory.name,
+          sortingOrderNo: replacingCategory.sortingOrderNo,
+        },
+        {
+          _id: replacedCategory._id,
+          name: replacedCategory.name,
+          sortingOrderNo: replacedCategory.sortingOrderNo,
+        },
+      ],
+    });
+  } catch (error: any) {
+    await session.abortTransaction();
+    session.endSession();
+    return handleTransactionError(session, error, res);
   }
 };

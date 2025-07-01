@@ -1,9 +1,9 @@
 
 import { cancelAppointment, createAppointment, getAppointmentById, getAppointmentsByDate, getPendingAppointments, getTeamMemberAppointments, updateAppointment } from 'controllers/users/userAppointmentController';
 import { createBusinessProfile, deleteBusinessProfileImage, getAllBusinessProfiles, getBusinessProfileById, updateBusinessGlobalCategories, updateBusinessProfile } from 'controllers/users/userBusinessController';
-import { createCategory, deleteCategories, getAllCategories, getBusinessCategories, getCategoryById, updateCategory } from 'controllers/users/userCategoryController';
+import { createCategory, deleteCategories, getAllCategories, getBusinessCategories, getCategoryById, swapCategoryOrder, updateCategory } from 'controllers/users/userCategoryController';
 import { createClient, deleteClients, getAllClients, getClientById, updateClientById } from 'controllers/users/userClientController';
-import { createPackage, getAllPackages, getPackageById, updatePackage, deletePackage, deletePackages } from 'controllers/users/userPackageController';
+import { createPackage, getAllPackages, getPackageById, updatePackage, deletePackage, deletePackages, swapPackageOrder } from 'controllers/users/userPackageController';
 import { deactivateUserAccount, getUserProfile, updateUserPassword, updateUserProfile } from 'controllers/users/userProfileController';
 import { addServiceToGlobalCategory, createService, deleteService,  getAllServices, getCategoriesWithServices, getServiceById, updateService } from 'controllers/users/userServicesController';
 import { createTeamMember,  deleteTeamMembers,  getAllTeamMembers, getTeamMemberById, updateTeamMember } from 'controllers/users/userTeamMemberController';
@@ -52,7 +52,8 @@ router.route('/category/:categoryId')
   .get(getCategoryById)
   .put(updateCategory)
 
-  router.delete('/categories', deleteCategories);
+router.delete('/categories', deleteCategories);
+router.post('/swap-categories', swapCategoryOrder)
 
 // Service Routes
 router.post('/service', createService);
@@ -70,6 +71,7 @@ router.get('/package/:packageId', getPackageById);
 router.put('/package/:packageId', updatePackage);
 router.delete('/package/:packageId', deletePackage);
 router.delete('/packages', deletePackages);
+router.post('/swap-packages', swapPackageOrder)
 
 
 // Appointment Routes

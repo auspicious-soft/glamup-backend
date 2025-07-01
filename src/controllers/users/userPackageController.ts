@@ -359,7 +359,7 @@ export const getAllPackages = async (req: Request, res: Response) => {
 
     const totalPackages = await Package.countDocuments(query);
     const packages = await Package.find(query)
-      .sort({ createdAt: -1 })
+      .sort({ sortingOrderNo: 1 })
       .skip(skip)
       .limit(limit);
 
@@ -933,6 +933,84 @@ export const deletePackages = async (req: Request, res: Response) => {
       }))
     });
   } catch (error: any) {
+    return handleTransactionError(session, error, res);
+  }
+};
+
+
+export const swapPackageOrder = async (req: Request, res: Response) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const businessId = await validateUserAndGetBusiness(req, res, session);
+    if (!businessId) return;
+
+    const { replacingPackageId, replacedPackageId } = req.body;
+
+    if (!replacingPackageId || !replacedPackageId) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Both replacingPackageId and replacedPackageId are required",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    if (!(await validateObjectId(replacingPackageId, "Package", res, session))) return;
+    if (!(await validateObjectId(replacedPackageId, "Package", res, session))) return;
+
+    const [replacingPackage, replacedPackage] = await Promise.all([
+      Package.findOne({ _id: replacingPackageId, businessId, isDeleted: false }).session(session),
+      Package.findOne({ _id: replacedPackageId, businessId, isDeleted: false }).session(session),
+    ]);
+
+    if (!replacingPackage || !replacedPackage) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "One or both Packages not found or you don't have access",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    const replacingOriginalOrder = replacingPackage.sortingOrderNo;
+    const replacedOriginalOrder = replacedPackage.sortingOrderNo;
+
+    // Use a temporary value to avoid unique constraint violation
+    const tempOrder = -1 * Date.now(); 
+
+    replacingPackage.sortingOrderNo = tempOrder;
+    await replacingPackage.save({ session });
+
+    replacedPackage.sortingOrderNo = replacingOriginalOrder;
+    await replacedPackage.save({ session });
+
+    replacingPackage.sortingOrderNo = replacedOriginalOrder;
+    await replacingPackage.save({ session });
+
+    await session.commitTransaction();
+    session.endSession();
+
+    return successResponse(res, "Package order swapped successfully", {
+      updatedPackages: [
+        {
+          _id: replacingPackage._id,
+          name: replacingPackage.name,
+          sortingOrderNo: replacingPackage.sortingOrderNo,
+        },
+        {
+          _id: replacedPackage._id,
+          name: replacedPackage.name,
+          sortingOrderNo: replacedPackage.sortingOrderNo,
+        },
+      ],
+    });
+  } catch (error: any) {
+    await session.abortTransaction();
+    session.endSession();
     return handleTransactionError(session, error, res);
   }
 };

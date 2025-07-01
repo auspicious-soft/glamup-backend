@@ -25,6 +25,7 @@ export interface IPackage {
   finalPrice: number;
   currency: string;
   businessId: mongoose.Types.ObjectId;
+  sortingOrderNo:number;
   isGlobalCategory: boolean; // Whether the primary category is a global category
   isActive: boolean;
   isDeleted: boolean;
@@ -131,6 +132,11 @@ const packageSchema = new mongoose.Schema(
       ref: 'UserBusinessProfile',
       required: true,
     },
+     sortingOrderNo: {
+      type: Number,
+      // required: true,
+      unique: true,
+    },
     isActive: {
       type: Boolean,
       default: true,
@@ -144,6 +150,28 @@ const packageSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+// Pre-save middleware to assign incrementing sortingOrderNo
+packageSchema.pre("save", async function (next) {
+  if (this.isNew && !this.sortingOrderNo) {
+    try {
+      const session = this.$session();
+      const query = mongoose.model("Package").findOne().sort({ sortingOrderNo: -1 });
+      if (session) {
+        query.session(session);
+      }
+      const lastPackage = await query;
+      const nextOrderNo = lastPackage && lastPackage.sortingOrderNo ? lastPackage.sortingOrderNo + 1 : 1;
+      this.sortingOrderNo = nextOrderNo;
+      next();
+    } catch (error) {
+      next(error as Error);
+    }
+  } else {
+    next();
+  }
+});
+
 
 // Pre-save middleware to calculate final price based on discount only
 packageSchema.pre('save', function(next) {

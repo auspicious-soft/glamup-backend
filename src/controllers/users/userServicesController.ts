@@ -558,7 +558,7 @@ export const getCategoriesWithServices = async (req: Request, res: Response) => 
       businessId: businessId,
       isActive: true,
       isDeleted: false 
-    }).sort({ name: 1 });
+    }).sort({ sortingOrderNo: 1 });
     
     // Get all team members for this business with only the needed fields
     const allTeamMembers = await TeamMember.find(
@@ -654,6 +654,7 @@ export const getCategoriesWithServices = async (req: Request, res: Response) => 
           _id: category._id,
           name: category.name,
           description: category.description,
+          sortingOrderNo:category.sortingOrderNo,
           isGlobal: false,
           services: enhancedServices
         };
