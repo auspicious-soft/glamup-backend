@@ -434,6 +434,7 @@ export const deactivateClientAccount = async (req: Request, res: Response) => {
       client._id,
       { 
         isActive: false,
+        isDeleted:true,
         deactivatedAt: new Date()
       },
       { session }
@@ -443,6 +444,7 @@ export const deactivateClientAccount = async (req: Request, res: Response) => {
       userId,
       { 
         isActive: false,
+        isDeleted:true,
         deactivatedAt: new Date()
       },
       { session }
@@ -490,8 +492,8 @@ export const reactivateClientAccount = async (req: Request, res: Response) => {
     const user = await User.findOne({
       ...query,
       businessRole: "client",
-      isActive: false,
-      isDeleted: false
+      // isActive: true,
+      // isDeleted: false
     }).session(session);
     
     if (!user) {
@@ -506,7 +508,7 @@ export const reactivateClientAccount = async (req: Request, res: Response) => {
     
     const client = await RegisteredClient.findOne({ 
       email: user.email,
-      isDeleted: false
+      // isDeleted: false
     }).session(session);
     
     if (!client) {
@@ -523,6 +525,7 @@ export const reactivateClientAccount = async (req: Request, res: Response) => {
       client._id,
       { 
         isActive: true,
+        isDeleted:false,
         $unset: { deactivatedAt: "" }
       },
       { session }
@@ -532,6 +535,7 @@ export const reactivateClientAccount = async (req: Request, res: Response) => {
       user._id,
       { 
         isActive: true,
+        isDeleted:false,
         $unset: { deactivatedAt: "" }
       },
       { session }

@@ -13,6 +13,7 @@ import { Readable } from "stream";
 import Busboy from "busboy";
 import { createS3Client, getS3FullUrl, uploadStreamToS3ofUser } from "../../config/s3";
 import { DeleteObjectCommand } from "@aws-sdk/client-s3";
+import RegisteredTeamMember from "models/registeredTeamMember/registeredTeamMemberSchema";
 
 // Helper function to handle file upload to S3
 const uploadProfilePictureToS3 = async (req: Request, userEmail: string): Promise<string | null> => {
@@ -95,11 +96,32 @@ export const getUserProfile = async (req: Request, res: Response) => {
       );
     }
 
-    const businessProfile = await UserBusinessProfile.findOne({
-      ownerId: userId,
-      isDeleted: false,
-      status: "active",
-    }).select("_id businessName");
+    let businessProfile = null;
+
+    if (user.businessRole === "team-member") {
+      // Find the team membership
+      const teamMembership = await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true,
+      });
+
+      if (teamMembership && teamMembership.businessId) {
+        // Find the business by businessId
+        businessProfile = await UserBusinessProfile.findOne({
+          _id: teamMembership.businessId,
+          isDeleted: false,
+          status: "active",
+        }).select("_id businessName");
+      }
+    } else {
+      // Default: owner or other roles
+      businessProfile = await UserBusinessProfile.findOne({
+        ownerId: userId,
+        isDeleted: false,
+        status: "active",
+      }).select("_id businessName");
+    }
 
     const profileData = {
       userId: user._id,
@@ -294,15 +316,54 @@ export const updateUserProfile = async (req: Request, res: Response) => {
       );
     }
 
+    
+    // --- NEW: Update RegisteredTeamMember if user is a team-member ---
+    if (updatedUser.businessRole === "team-member") {
+      const teamMemberUpdate: any = {};
+      if (fullName !== undefined) teamMemberUpdate.fullName = fullName;
+      if (email !== undefined) teamMemberUpdate.email = email;
+      if (phoneNumber !== undefined) teamMemberUpdate.phoneNumber = phoneNumber;
+      if (countryCode !== undefined) teamMemberUpdate.countryCode = countryCode;
+      if (countryCallingCode !== undefined) teamMemberUpdate.countryCallingCode = countryCallingCode;
+      if (profilePicUpdated) teamMemberUpdate.profilePic = profilePicUrl;
+
+      await RegisteredTeamMember.updateMany(
+        { userId: userId, isDeleted: false },
+        { $set: teamMemberUpdate },
+        { session }
+      );
+    }
+
     await session.commitTransaction();
     session.endSession();
 
     // Get business profile data to match getUserProfile response format
-    const businessProfile = await UserBusinessProfile.findOne({
-      ownerId: userId,
-      isDeleted: false,
-      status: "active",
-    }).select("_id businessName");
+    let businessProfile = null;
+
+    if (user.businessRole === "team-member") {
+      // Find the team membership
+      const teamMembership = await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true,
+      });
+
+      if (teamMembership && teamMembership.businessId) {
+        // Find the business by businessId
+        businessProfile = await UserBusinessProfile.findOne({
+          _id: teamMembership.businessId,
+          isDeleted: false,
+          status: "active",
+        }).select("_id businessName");
+      }
+    } else {
+      // Default: owner or other roles
+      businessProfile = await UserBusinessProfile.findOne({
+        ownerId: userId,
+        isDeleted: false,
+        status: "active",
+      }).select("_id businessName");
+    }
 
     // Format response to match getUserProfile
     const profileData = {
@@ -453,6 +514,18 @@ export const deactivateUserAccount = async (req: Request, res: Response) => {
       { session }
     );
 
+     if (user.businessRole === "team-member") {
+      await RegisteredTeamMember.updateMany(
+        { userId: userId, isDeleted: false },
+        { 
+          isActive: false,
+          isDeleted: true,
+          deactivatedAt: new Date()
+        },
+        { session }
+      );
+    }
+    
     const businessProfile = await UserBusinessProfile.findOne({
       ownerId: userId,
       status: "active"

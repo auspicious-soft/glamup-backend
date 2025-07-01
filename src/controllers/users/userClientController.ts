@@ -26,6 +26,7 @@ import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 import mongoose from "mongoose";
 import RegisteredTeamMember from "models/registeredTeamMember/registeredTeamMemberSchema";
 import User from "models/user/userSchema";
+import Appointment from "models/appointment/appointmentSchema";
 
 // Helper function to handle file upload to S3
 const uploadProfilePictureToS3 = async (req: Request, userEmail: string): Promise<{ key: string, fullUrl: string } | null> => {
@@ -326,8 +327,58 @@ export const getClientById = async (req: Request, res: Response) => {
       );
     }
 
+      const appointments = await Appointment.find({
+      clientId: client._id,
+      businessId: businessId,
+      isDeleted: false
+    })
+      .sort({ date: -1, startTime: -1 })
+      .select({
+        status: 1,
+        description: 1,
+        services: 1,
+        duration: 1,
+        startTime: 1,
+        endTime: 1,
+        date: 1,
+        teamMemberId: 1,
+        totalPrice: 1,
+        discount: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      })
+      .populate([
+        { path: "services", select: "name duration price" },
+        { path: "teamMemberId", select: "name email" },
+        // { path: "categoryId", select: "name" }
+      ])
+      .lean();
+
+
+       const appointmentHistory = appointments.map((appt: any) => ({
+      status: appt.status,
+      description: appt.description,
+      services: Array.isArray(appt.services)
+        ? appt.services.map((s: any) => ({
+            name: s.name,
+          }))
+        : [],
+      duration: appt.duration,
+      startTime: appt.startTime,
+      endTime: appt.endTime,
+      date: appt.date,
+      teamMember: appt.teamMemberId
+        ? { name: appt.teamMemberId.name, email: appt.teamMemberId.email }
+        : null,
+      totalPrice: appt.totalPrice,
+      discount: appt.discount,
+      createdAt: appt.createdAt,
+      updatedAt: appt.updatedAt,
+    }));
+
     return successResponse(res, "Client fetched successfully", {
       client,
+      appointmentHistory,
     });
   } catch (error: any) {
     console.error("Error fetching client:", error);

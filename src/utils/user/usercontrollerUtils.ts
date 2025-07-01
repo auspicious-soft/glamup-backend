@@ -22,7 +22,7 @@ export const extractUserId = (req: Request): string | null => {
 /**
  * Validates user authentication and returns user ID
  */
-export const validateUserAuth = async (
+export const  validateUserAuth = async (
   req: Request, 
   res: Response, 
   session?: mongoose.ClientSession

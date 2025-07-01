@@ -156,10 +156,13 @@ export const clientSignUp = async (req: Request, res: Response) => {
       $or: [{ email }, { phoneNumber }],
     }).session(session);
     
-    if (existingClient) {
+    if (existingClient &&
+  existingClient.isDeleted === false &&
+  existingClient.isActive === true
+    ) {
       await session.abortTransaction();
       session.endSession();
-      const message =
+      const message = 
         existingClient.email === email
           ? "Client with this email already exists"
           : "Client with this phone number already exists";
@@ -170,7 +173,9 @@ export const clientSignUp = async (req: Request, res: Response) => {
       $or: [{ email }, { phoneNumber }],
     }).session(session);
     
-    if (existingUser) {
+    if ( existingUser &&
+  existingUser.isDeleted === false &&
+  existingUser.isActive === true) {
       await session.abortTransaction();
       session.endSession();
       const message =
