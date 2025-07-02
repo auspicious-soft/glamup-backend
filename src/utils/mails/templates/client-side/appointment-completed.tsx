@@ -7,7 +7,7 @@ interface Props {
   services: string[];
 }
 
-export default function AppointmentCompletedEmail({ clientName, businessName, date, services }: Props) {
+export default function AppointmentCompletedEmailClient({ clientName, businessName, date, services }: Props) {
   return (
     <div>
       <h2>Appointment Completed</h2>

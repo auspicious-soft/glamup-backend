@@ -15,6 +15,7 @@ import { isTimeSlotAvailable } from "../../utils/appointment/appointmentUtils";
 import ClientAppointment from "../../models/clientAppointment/clientAppointmentSchema";
 import Appointment from "models/appointment/appointmentSchema";
 import { customAlphabet } from "nanoid";
+import { sendAppointmentBookedEmailBusiness, sendAppointmentCanceledEmailBusiness } from "utils/mails/mail";
 
 // Create a nanoid generator for appointment IDs
 const appointmentId = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 10);
@@ -277,7 +278,19 @@ businessLogo: business.businessProfilePic || [],      businessAddress: business.
     
     await session.commitTransaction();
     session.endSession();
-    
+     try {
+      await sendAppointmentBookedEmailBusiness(
+        business.email, // business email from UserBusinessProfile
+        client.fullName,
+        business.businessName,
+        appointmentDate.toISOString().split('T')[0], // date as YYYY-MM-DD
+        startTime,
+        services.map(service => service.name)
+      );
+    } catch (mailErr) {
+      console.error("Failed to send appointment booked email to business:", mailErr);
+      // Do not fail the API if email fails
+    }
     return successResponse(
       res,
       "Appointment created successfully",
@@ -526,6 +539,35 @@ export const cancelClientAppointment = async (req: Request, res: Response) => {
     
     await session.commitTransaction();
     session.endSession();
+try {
+  // Get business email and name
+  const businessProfile = await UserBusinessProfile.findById(clientAppointment.businessId);
+  // Get client name and phone
+  const client = await RegisteredClient.findById(clientAppointment.clientId);
+
+  if (
+    businessProfile &&
+    businessProfile.email &&
+    businessProfile.businessName &&
+    client &&
+    client.fullName &&
+    client.phoneNumber
+  ) {
+    await sendAppointmentCanceledEmailBusiness(
+      businessProfile.email, // business email
+      client.fullName, // clientName
+      businessProfile.businessName, // businessName
+      clientAppointment.date.toISOString().split('T')[0], // date
+      clientAppointment.startTime, // startTime
+      clientAppointment.cancellationReason, // cancellationReason
+      client.phoneNumber // clientPhoneNumber
+    );
+  }
+} catch (mailErr) {
+  console.error("Failed to send appointment cancelled email to business:", mailErr);
+  // Do not fail the API if email fails
+}
+
     
     return successResponse(
       res,

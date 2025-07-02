@@ -3,10 +3,12 @@ import { configDotenv } from "dotenv";
 import ForgotPasswordEmail from "./templates/forget-password";
 import LoginCredentials from "./templates/login-credentials";
 import VerifyEmail from "./templates/email-verification";
-import AppointmentBookedEmail from "./templates/appointment-booked";
-import AppointmentConfirmedEmail from "./templates/appointment-confirmed";
-import AppointmentCompletedEmail from "./templates/appointment-completed";
-import AppointmentCanceledEmail from "./templates/appointment-cancelled";
+import AppointmentBookedEmailClient from "./templates/client-side/appointment-booked";
+import AppointmentConfirmedEmailClient from "./templates/client-side/appointment-confirmed";
+import AppointmentCompletedEmailClient from "./templates/client-side/appointment-completed";
+import AppointmentCanceledEmailClient from "./templates/client-side/appointment-cancelled";
+import AppointmentBookedEmailBusiness from "./templates/business-side/appointment-booked";
+import AppointmentCanceledEmailBusiness from "./templates/business-side/appointment-cacelled";
 configDotenv()
 
 const resend = new Resend(process.env.RESEND_API_KEY)
@@ -70,3 +72,107 @@ export const addedUserCreds = async (payload: any) => {
         text: `Hello ${payload.name ? payload.name.eng :payload.fullName.eng},\n\nYour account has been created with the following credentials:\n\nEmail: ${payload.email}\nPassword: ${payload.password}\nRole: ${payload.role}\n\nPlease keep this information secure.`,
     })
 }
+
+
+
+// Client-side: Appointment Booked
+export const sendAppointmentBookedEmailClient = async (
+  email: string,
+  clientName: string,
+  businessName: string,
+  date: string,
+  startTime: string,
+  services: string[]
+) => {
+  return await resend.emails.send({
+    from: process.env.COMPANY_RESEND_GMAIL_ACCOUNT as string,
+    to: email,
+    subject: "Your Appointment is Booked",
+    react: AppointmentBookedEmailClient({ clientName, businessName, date, startTime, services }),
+  });
+};
+
+// Client-side: Appointment Confirmed
+export const sendAppointmentConfirmedEmailClient = async (
+  email: string,
+  clientName: string,
+  businessName: string,
+  date: string,
+  startTime: string,
+  services: string[]
+) => {
+  return await resend.emails.send({
+    from: process.env.COMPANY_RESEND_GMAIL_ACCOUNT as string,
+    to: email,
+    subject: "Your Appointment is Confirmed",
+    react: AppointmentConfirmedEmailClient({ clientName, businessName, date, startTime, services }),
+  });
+};
+
+// Client-side: Appointment Completed
+export const sendAppointmentCompletedEmailClient = async (
+  email: string,
+  clientName: string,
+  businessName: string,
+  date: string,
+  services: string[]
+) => {
+  return await resend.emails.send({
+    from: process.env.COMPANY_RESEND_GMAIL_ACCOUNT as string,
+    to: email,
+    subject: "Appointment Completed",
+    react: AppointmentCompletedEmailClient({ clientName, businessName, date, services }),
+  });
+};
+
+// Client-side: Appointment Cancelled
+export const sendAppointmentCanceledEmailClient = async (
+  email: string,
+  clientName: string,
+  businessName: string,
+  date: string,
+  startTime: string,
+  cancellationReason?: string
+) => {
+  return await resend.emails.send({
+    from: process.env.COMPANY_RESEND_GMAIL_ACCOUNT as string,
+    to: email,
+    subject: "Appointment Cancelled",
+    react: AppointmentCanceledEmailClient({ clientName, businessName, date, startTime, cancellationReason }),
+  });
+};
+
+// Business-side: Appointment Booked
+export const sendAppointmentBookedEmailBusiness = async (
+  email: string,
+  clientName: string,
+  businessName: string,
+  date: string,
+  startTime: string,
+  services: string[]
+) => {
+  return await resend.emails.send({
+    from: process.env.COMPANY_RESEND_GMAIL_ACCOUNT as string,
+    to: email,
+    subject: "New Appointment Booked",
+    react: AppointmentBookedEmailBusiness({ clientName, businessName, date, startTime, services }),
+  });
+};
+
+// Business-side: Appointment Cancelled
+export const sendAppointmentCanceledEmailBusiness = async (
+  email: string,
+  clientName: string,
+  businessName: string,
+  date: string,
+  startTime: string,
+  cancellationReason?: string,
+  clientPhoneNumber?: string
+) => {
+  return await resend.emails.send({
+    from: process.env.COMPANY_RESEND_GMAIL_ACCOUNT as string,
+    to: email,
+    subject: "Appointment Cancelled",
+    react: AppointmentCanceledEmailBusiness({ clientName, businessName, date, startTime, cancellationReason, clientPhoneNumber }),
+  });
+};

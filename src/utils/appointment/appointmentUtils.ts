@@ -499,7 +499,7 @@ export const calculateEndTime = (startTime: string, durationMinutes: number): st
 export const validateAppointmentEntities = async (
   clientId: string,
   teamMemberId: string,
-  categoryId: string,
+  categoryId: string | undefined,
   serviceIds: string[],
   startDate: Date,
   endDate: Date,
@@ -602,56 +602,56 @@ export const validateAppointmentEntities = async (
     
     // For global category services, we don't need to validate the category
     // since we've already validated the services
-    let category;
-    const isGlobalCategoryService = services.some(s => s.isGlobalCategory);
+    // let category;
+    // const isGlobalCategoryService = services.some(s => s.isGlobalCategory);
     
-    if (!isGlobalCategoryService) {
-      // Only validate category for non-global services
-      category = await Category.findOne({
-        _id: categoryId,
-        isActive: true,
-        isDeleted: false
-      });
+    // if (!isGlobalCategoryService) {
+    //   // Only validate category for non-global services
+    //   category = await Category.findOne({
+    //     _id: categoryId,
+    //     isActive: true,
+    //     isDeleted: false
+    //   });
       
-      if (!category) {
-        return { valid: false, message: "Category not found or inactive" };
-      }
-    } else {
-      // For global category services, get the category info from the business profile
-      if (businessId) {
-        const business = await Business.findById(businessId);
-        if (business) {
-          const globalCatInfo = business.selectedCategories.find(
-            (cat: any) => cat.categoryId.toString() === categoryId
-          );
+    //   if (!category) {
+    //     return { valid: false, message: "Category not found or inactive" };
+    //   }
+    // } else {
+    //   // For global category services, get the category info from the business profile
+    //   if (businessId) {
+    //     const business = await Business.findById(businessId);
+    //     if (business) {
+    //       const globalCatInfo = business.selectedCategories.find(
+    //         (cat: any) => cat.categoryId.toString() === categoryId
+    //       );
           
-          if (globalCatInfo) {
-            category = {
-              _id: globalCatInfo.categoryId,
-              name: globalCatInfo.name
-            };
-          }
-        }
-      }
+    //       if (globalCatInfo) {
+    //         category = {
+    //           _id: globalCatInfo.categoryId,
+    //           name: globalCatInfo.name
+    //         };
+    //       }
+    //     }
+    //   }
       
-      if (!category) {
-        // Try to get the category directly from GlobalCategory model
-        const globalCategory = await mongoose.model("GlobalCategory").findOne({
-          _id: categoryId,
-          isActive: true,
-          isDeleted: false
-        });
+    //   if (!category) {
+    //     // Try to get the category directly from GlobalCategory model
+    //     const globalCategory = await mongoose.model("GlobalCategory").findOne({
+    //       _id: categoryId,
+    //       isActive: true,
+    //       isDeleted: false
+    //     });
         
-        if (globalCategory) {
-          category = {
-            _id: globalCategory._id,
-            name: globalCategory.name
-          };
-        } else {
-          return { valid: false, message: "Global category not found or inactive" };
-        }
-      }
-    }
+    //     if (globalCategory) {
+    //       category = {
+    //         _id: globalCategory._id,
+    //         name: globalCategory.name
+    //       };
+    //     } else {
+    //       return { valid: false, message: "Global category not found or inactive" };
+    //     }
+    //   }
+    // }
     
     // Validate package if provided
     let packageData = null;
@@ -672,7 +672,7 @@ export const validateAppointmentEntities = async (
       valid: true,
       client,
       teamMember,
-      category,
+      // category,
       services,
       packageData,
       totalDuration,
@@ -740,8 +740,8 @@ export const prepareAppointmentData = (
     startTime,
     endTime,
     duration: totalDuration,
-    categoryId: category._id,
-    categoryName: category.name,
+    // categoryId: category._id,
+    // categoryName: category.name,
     services: appointmentServices,
     package: appointmentPackage,
     totalPrice,

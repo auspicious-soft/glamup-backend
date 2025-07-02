@@ -8,7 +8,7 @@ interface Props {
   cancellationReason?: string;
 }
 
-export default function AppointmentCanceledEmail({ clientName, businessName, date, startTime, cancellationReason }: Props) {
+export default function AppointmentCanceledEmailClient({ clientName, businessName, date, startTime, cancellationReason }: Props) {
   return (
     <div>
       <h2>Appointment Cancelled</h2>

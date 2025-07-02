@@ -36,6 +36,7 @@ import Category from "models/category/categorySchema";
 import Client from "models/client/clientSchema";
 import User from "models/user/userSchema";
 import RegisteredTeamMember from "models/registeredTeamMember/registeredTeamMemberSchema";
+import { sendAppointmentBookedEmailClient } from "utils/mails/mail";
 
 // Helper function to calculate end time based on services duration
 const calculateEndTimeFromServices = async (
@@ -155,7 +156,8 @@ export const createAppointment = async (req: Request, res: Response) => {
               phoneNumber,
               countryCode: countryCode || "+91",
               countryCallingCode: countryCallingCode || "IN",
-              profilePicture: "https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/dummyClientPicture.png",
+              profilePicture:
+                "https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/dummyClientPicture.png",
               birthday: null,
               gender: "prefer_not_to_say",
               address: {
@@ -372,6 +374,29 @@ export const createAppointment = async (req: Request, res: Response) => {
     await session.commitTransaction();
     session.endSession();
 
+    try {
+      // Get client and business info
+      const client = validationResult.client;
+      const business = await Business.findById(businessId);
+
+      if (client && client.email && business && business.businessName) {
+        await sendAppointmentBookedEmailClient(
+          client.email,
+          client.name, // or client.fullName if that's the field
+          business.businessName,
+          appointmentData.date.toISOString().split("T")[0],
+          appointmentData.startTime,
+          (validationResult.services || []).map((s: any) => s.name)
+        );
+      }
+    } catch (mailErr) {
+      console.error(
+        "Failed to send appointment booked email to client:",
+        mailErr
+      );
+      // Do not fail the API if email fails
+    }
+
     return successResponse(
       res,
       "Appointment created successfully",
@@ -470,13 +495,16 @@ export const getAppointmentsByDate = async (req: Request, res: Response) => {
     );
 
     // Parse the date from query
-     const currentDate = new Date();
-    currentDate.setHours(0, 0, 0, 0); 
-    const inputDate = req.query.date ? new Date(req.query.date as string) : null;
-    
-    const baseDate = inputDate && !isNaN(inputDate.getTime()) && inputDate >= currentDate 
-      ? inputDate 
-      : currentDate;
+    const currentDate = new Date();
+    currentDate.setHours(0, 0, 0, 0);
+    const inputDate = req.query.date
+      ? new Date(req.query.date as string)
+      : null;
+
+    const baseDate =
+      inputDate && !isNaN(inputDate.getTime()) && inputDate >= currentDate
+        ? inputDate
+        : currentDate;
 
     const endOfMonth = new Date(
       baseDate.getFullYear(),
@@ -509,9 +537,8 @@ export const getAppointmentsByDate = async (req: Request, res: Response) => {
       date: { $gte: baseDate, $lte: endOfWeek },
     });
 
-
     return successResponse(res, "Appointments fetched successfully", {
-         monthlyUpcomingAppointments,
+      monthlyUpcomingAppointments,
       weeklyUpcomingAppointments,
       ...paginationMetadata,
       appointments,
@@ -899,11 +926,15 @@ export const updateAppointment = async (req: Request, res: Response) => {
     }
 
     const updateData = prepareAppointmentUpdateData(req, existingAppointment);
+    const safeCategoryId =
+      updateData.categoryId && updateData.categoryId !== ""
+        ? updateData.categoryId
+        : undefined;
 
     const validationResult = await validateAppointmentEntities(
       updateData.clientId,
       updateData.teamMemberId,
-      updateData.categoryId,
+      safeCategoryId,
       updateData.serviceIds,
       updateData.startDate,
       updateData.endDate,
@@ -1174,19 +1205,19 @@ export const getPendingAppointments = async (req: Request, res: Response) => {
     }
 
     const now = new Date();
-    const currentDate = now.toISOString().split('T')[0];
-    const currentTime = now.toTimeString().split(' ')[0]; 
+    const currentDate = now.toISOString().split("T")[0];
+    const currentTime = now.toTimeString().split(" ")[0];
 
     const query: any = {
       businessId: businessId,
       status: "PENDING",
       isDeleted: false,
       $or: [
-        { date: { $gt: currentDate } }, 
+        { date: { $gt: currentDate } },
         {
-          date: currentDate, 
-          startTime: { $gte: currentTime }
-        }
+          date: currentDate,
+          startTime: { $gte: currentTime },
+        },
       ],
       ...dateQuery,
     };
@@ -1214,7 +1245,7 @@ export const getPendingAppointments = async (req: Request, res: Response) => {
     const totalAppointments = await Appointment.countDocuments(query);
 
     const pendingAppointments = await Appointment.find(query)
-      .sort({ date: 1, startTime: 1 }) 
+      .sort({ date: 1, startTime: 1 })
       .skip(pagination.skip)
       .limit(pagination.limit);
 
