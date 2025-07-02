@@ -734,7 +734,7 @@ export const prepareAppointmentData = (
     clientPhone: client.phoneNumber || "",
     teamMemberId: teamMember._id,
     teamMemberName: teamMember.name, 
-    businessId: businessId,
+    businessId: businessId, 
     date: new Date(date),
     endDate: new Date(endDate),
     startTime,
