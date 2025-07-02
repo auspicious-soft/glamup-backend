@@ -139,7 +139,7 @@ export const sendAppointmentCanceledEmailClient = async (
     to: email,
     subject: "Appointment Cancelled",
     react: AppointmentCanceledEmailClient({ clientName, businessName, date, startTime, cancellationReason }),
-  });
+  }); 
 };
 
 // Business-side: Appointment Booked
