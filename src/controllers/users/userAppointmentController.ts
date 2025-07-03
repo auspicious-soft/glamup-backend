@@ -528,7 +528,8 @@ for (const appt of appointments) {
 
     clientObj.name = clientObj.fullName || clientObj.name || "";
     delete clientObj.fullName;
-
+    clientObj.profilePicture = clientObj.profilePic || clientObj.profilePicture || "";
+    delete clientObj.profilePic;
     // Assign cleaned object back to appointment
     (appt as any).clientId = clientObj;
   }
