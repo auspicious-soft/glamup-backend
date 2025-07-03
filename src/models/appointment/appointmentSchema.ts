@@ -22,6 +22,7 @@ export interface AppointmentPackage {
 export interface IAppointment {
   appointmentId: string;
   clientId: mongoose.Types.ObjectId;
+   clientModel?: string;
   clientName: string;
   clientEmail: string;
   clientPhone: string;
@@ -48,6 +49,7 @@ export interface IAppointment {
   cancellationBy: "client" | "business" | null;
   parentAppointmentId: mongoose.Types.ObjectId | null;
   isRescheduled: boolean;
+  createdVia:"client_booking" | "business";
   createdBy: mongoose.Types.ObjectId;
   updatedBy: mongoose.Types.ObjectId;
   isDeleted: boolean;
@@ -64,11 +66,17 @@ const appointmentSchema = new mongoose.Schema(
       unique: true,
       default: () => appointmentId(),
     },
-    clientId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Client',
-      required: true,
-    },
+   clientId: {
+  type: mongoose.Schema.Types.ObjectId,
+  required: true,
+  refPath: 'clientModel'
+},
+
+clientModel: {
+  type: String,
+  required: true,
+  enum: ['Client', 'RegisteredClient']
+},
     clientName: {
       type: String,
       required: true,

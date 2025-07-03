@@ -699,7 +699,8 @@ export const prepareAppointmentData = (
   totalDuration: number,
   totalPrice: number,
   discount: number,
-  userId: mongoose.Types.ObjectId
+  userId: mongoose.Types.ObjectId,
+  clientModel?: string,
 ) => {
   const discountAmount = discount || 0;
   const finalPrice = totalPrice - discountAmount;
@@ -749,7 +750,8 @@ export const prepareAppointmentData = (
     finalPrice,
     currency: "INR",
     createdBy: userId,
-    updatedBy: userId
+    updatedBy: userId,
+     ...(clientModel ? { clientModel } : {}),
   };
 };
 
