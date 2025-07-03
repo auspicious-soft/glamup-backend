@@ -512,17 +512,33 @@ export const getAppointmentsByDate = async (req: Request, res: Response) => {
       .populate("teamMemberId")
       .sort({ date: 1, startTime: 1 })
       .skip(pagination.skip)
-      .limit(pagination.limit);
+      .limit(pagination.limit)
+      .lean();
 
 for (const appt of appointments) {
+  const rawClient = appt.clientId;
 
-  const rawClientId = appt.get("clientId");
+  if (
+    rawClient &&
+    appt.clientModel === "RegisteredClient" &&
+    typeof rawClient === "object" &&
+    !("toHexString" in rawClient)
+  ) {
+    const clientObj = (rawClient as any).toObject ? (rawClient as any).toObject() : rawClient;
+
+    clientObj.name = clientObj.fullName || clientObj.name || "";
+    delete clientObj.fullName;
+
+    // Assign cleaned object back to appointment
+    (appt as any).clientId = clientObj;
+  }
+
+  // If no clientId but client_booking, fetch RegisteredClient
   if (
     (!appt.clientId || appt.clientId === null) &&
-    appt.createdVia === "client_booking" &&
-    rawClientId
+    appt.createdVia === "client_booking"
   ) {
-    const registeredClient = await RegisteredClient.findById(rawClientId);
+    const registeredClient = await RegisteredClient.findById(rawClient);
 
     if (registeredClient) {
       (appt as any).clientDetails = {
@@ -543,11 +559,13 @@ for (const appt of appointments) {
         clientId: null,
         createdAt: registeredClient.createdAt,
         updatedAt: registeredClient.updatedAt,
-        __v: 0
+        __v: 0,
       };
     }
   }
 }
+
+
     const paginationMetadata = preparePaginationMetadata(
       totalAppointments,
       pagination
