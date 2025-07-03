@@ -70,4 +70,8 @@ app.get("/", (_, res: any) => {
     res.send("Hello world entry point 🚀✅");
 });
 
+app.get("/privacy-policy", (_, res) => {
+  res.sendFile(path.join(__dirname, "static", "privacy-policy.html"));
+});
+
 app.listen(PORT, () => console.log(`Server is listening on port ${PORT}`)); 
