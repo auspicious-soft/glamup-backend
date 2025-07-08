@@ -878,3 +878,262 @@ export const getClientUpcomingAppointments = async (req: Request, res: Response)
     );
   }
 };
+
+
+export const updateClientAppointment = async (req: Request, res: Response) => {
+  const session = await mongoose.startSession();
+
+  try {
+    session.startTransaction();
+
+    const { appointmentId } = req.params;
+    const {
+      clientId,
+      businessId,
+      teamMemberId,
+      serviceIds,
+      date,
+      startTime,
+      endTime,
+      notes,
+    } = req.body;
+
+    // Validate appointmentId
+    if (!mongoose.Types.ObjectId.isValid(appointmentId)) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Invalid appointment ID format",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    // Find the client appointment
+    const clientAppointment = await ClientAppointment.findOne({
+      _id: appointmentId,
+      isDeleted: false,
+    }).session(session);
+
+    if (!clientAppointment) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Appointment not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    // Only the client who created the appointment can update it
+    if (clientAppointment.clientId.toString() !== clientId) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "You are not authorized to update this appointment",
+        httpStatusCode.FORBIDDEN,
+        res
+      );
+    }
+
+    // Validate required fields
+    if (!businessId || !teamMemberId || !serviceIds || !date || !startTime) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Missing required fields for appointment update",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    // Validate business
+    const business = await UserBusinessProfile.findOne({
+      _id: businessId,
+      status: "active",
+      isDeleted: false,
+    }).session(session);
+
+    if (!business) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Business profile not found or inactive",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    // Validate client
+    const client = await RegisteredClient.findById(clientId).session(session);
+    if (!client) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Client not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    // Validate team member
+    const teamMember = await TeamMember.findOne({
+      _id: teamMemberId,
+      businessId: businessId,
+      isActive: true,
+      isDeleted: false,
+    }).session(session);
+
+    if (!teamMember) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Team member not found or inactive",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    // Validate services
+    const services = await Service.find({
+      _id: { $in: serviceIds },
+      businessId: businessId,
+      isActive: true,
+      isDeleted: false,
+    }).session(session);
+
+    if (services.length !== serviceIds.length) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "One or more services not found or inactive",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    // Validate date (cannot update to a past date)
+    const appointmentDate = new Date(date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    if (appointmentDate < today) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Cannot update appointment to a past date",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+  const newTeamMemberId = teamMemberId || clientAppointment.teamMemberId.toString();
+const newDate = date ? new Date(date) : clientAppointment.date;
+const newStartTime = startTime || clientAppointment.startTime;
+const newEndTime = endTime || clientAppointment.endTime;
+
+// Calculate total duration and price for new services (or existing)
+const updatedServices = serviceIds
+  ? await Service.find({
+      _id: { $in: serviceIds },
+      businessId: businessId,
+      isActive: true,
+      isDeleted: false, 
+    }).session(session)
+  : clientAppointment.services;
+
+const totalDuration = updatedServices.reduce((sum, service) => sum + service.duration, 0);
+const finalEndTime = endTime || calculateEndTime(newStartTime, updatedServices);
+const totalPrice = updatedServices.reduce((sum, service) => sum + service.price, 0);
+
+// Only check time slot if team member, date, or startTime is changed
+const shouldCheckTimeSlot =
+  (teamMemberId && teamMemberId !== clientAppointment.teamMemberId.toString()) ||
+  (date && new Date(date).toISOString() !== clientAppointment.date.toISOString()) ||
+  (startTime && startTime !== clientAppointment.startTime) ||
+  (endTime && endTime !== clientAppointment.endTime);
+
+if (shouldCheckTimeSlot) {
+  const isAvailable = await isTimeSlotAvailable(
+    newTeamMemberId,
+    newDate,
+    newDate,
+    newStartTime,
+    finalEndTime,
+    appointmentId // Exclude current appointment from conflict check
+  );
+
+  if (!isAvailable) {
+    await session.abortTransaction();
+    session.endSession();
+    return errorResponseHandler(
+      "Selected time slot is not available for the team member",
+      httpStatusCode.BAD_REQUEST,
+      res
+    );
+  }
+}
+
+// Update the client appointment
+clientAppointment.teamMemberId = newTeamMemberId;
+clientAppointment.teamMemberName = teamMember ? teamMember.name : clientAppointment.teamMemberName;
+clientAppointment.teamMemberProfilePic = teamMember ? teamMember.profilePicture || "" : clientAppointment.teamMemberProfilePic;
+clientAppointment.services = updatedServices.map(service => ({
+  serviceId: (service as any)._id ?? (service as any).serviceId,
+  name: service.name,
+  duration: service.duration,
+  price: service.price,
+}));
+clientAppointment.date = newDate;
+clientAppointment.endDate = newDate;
+clientAppointment.startTime = newStartTime;
+clientAppointment.endTime = finalEndTime;
+clientAppointment.duration = totalDuration;
+clientAppointment.totalPrice = totalPrice;
+clientAppointment.finalPrice = totalPrice;
+clientAppointment.status = "PENDING"; // Reset to pending on update
+
+await clientAppointment.save({ session });
+
+// Update the corresponding business appointment as well
+const businessAppointment = await Appointment.findOne({
+  appointmentId: clientAppointment.appointmentId,
+  isDeleted: false,
+}).session(session);
+
+if (businessAppointment) {
+  businessAppointment.teamMemberId = newTeamMemberId;
+  businessAppointment.teamMemberName = teamMember ? teamMember.name : businessAppointment.teamMemberName;
+  businessAppointment.services = clientAppointment.services;
+  businessAppointment.date = newDate;
+  businessAppointment.endDate = newDate;
+  businessAppointment.startTime = newStartTime;
+  businessAppointment.endTime = finalEndTime;
+  businessAppointment.duration = totalDuration;
+  businessAppointment.totalPrice = totalPrice;
+  businessAppointment.finalPrice = totalPrice;
+  businessAppointment.status = "PENDING";
+  await businessAppointment.save({ session });
+}
+
+    await session.commitTransaction();
+    session.endSession();
+
+    return successResponse(
+      res,
+      "Appointment updated successfully",
+      { appointment: clientAppointment },
+      httpStatusCode.OK
+    );
+  } catch (error: any) {
+    await session.abortTransaction();
+    session.endSession();
+    console.error("Error updating client appointment:", error);
+    const parsedError = errorParser(error);
+    return errorResponseHandler(
+      parsedError.message,
+      parsedError.code,
+      res
+    );
+  }
+};

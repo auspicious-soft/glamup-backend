@@ -17,7 +17,8 @@ import {
   getClientAppointmentById, 
   cancelClientAppointment, 
   rescheduleClientAppointment, 
-  getClientUpcomingAppointments
+  getClientUpcomingAppointments,
+  updateClientAppointment
 } from "../controllers/client/clientAppointmentController";
 import {
   getClientProfile,
@@ -49,7 +50,7 @@ router.get("/business-by-id", getBusinessProfileById)
 router.get("/members-by-services", getTeamMembersByServices)
 router.post("/favourite-business", addFavouriteBusiness);
 router.get("/favourite-businesses/:clientId", getFavouriteBusinesses)
-
+router.put('/client-appointment/:appointmentId', updateClientAppointment);
 
 // Client profile routes (auth required)
 router.get("/profile", getClientProfile);
