@@ -542,42 +542,53 @@ export const validateAppointmentEntities = async (
     let services: IService[] = [];
     let totalDuration = 0;
     let totalPrice = 0;
+    let category;
     
-    if (serviceIds && serviceIds.length > 0) {
-      // First try to find services in business-specific services
+    if (packageId && (!serviceIds || serviceIds.length === 0)) {
+      // Handle package-only case
+      const packageItem = await Package.findOne({
+        _id: packageId,
+        isDeleted: false
+      })
+      
+      if (!packageItem) {
+        return { valid: false, message: "Package not found" };
+      }
+      
+      totalDuration = packageItem.duration || 0;
+      totalPrice = packageItem.price || 0;
+      services = packageItem.services as any || []; // Include package services if available
+      category = {
+        _id: packageItem.categoryId,
+        name: packageItem.categoryName || "Package Category" // Adjust based on Package schema
+      };
+    } else if (serviceIds && serviceIds.length > 0) {
+      // Original service validation logic
       services = await Service.find({
         _id: { $in: serviceIds },
         isDeleted: false
-      });
+      })
       
-      // Check if any services were not found in business services
       const foundServiceIds = services.map(s => {
         const id = (s as any)._id || (s as any).id || (s as any).serviceId;
         return id ? id.toString() : '';
       });
       const missingServiceIds = serviceIds.filter(id => !foundServiceIds.includes(id));
       
-      // If there are missing services, try to find them in global categories
       if (missingServiceIds.length > 0 && businessId) {
-        const business = await Business.findById(businessId);
+        const business = await Business.findById(businessId)
         if (business) {
-          // Get the business's selected global categories
           const selectedCategories = business.selectedCategories || [];
-          
-          // For each missing service, try to find it in global categories
           for (const catId of selectedCategories) {
-            const category = await Category.findById(catId).populate('services');
-            const populatedServices = category?.get('services') as any[] | undefined;
-            if (category && populatedServices) {
+            const categoryData = await Category.findById(catId).populate('services')
+            const populatedServices = categoryData?.get('services') as any[] | undefined;
+            if (categoryData && populatedServices) {
               for (const missingId of missingServiceIds) {
                 const globalService = populatedServices.find(
                   (s: any) => s._id.toString() === missingId
                 );
-                
                 if (globalService) {
                   services.push(globalService);
-                  // Remove this ID from missing IDs
-                  missingServiceIds.splice(missingServiceIds.indexOf(missingId), 1);
                 }
               }
             }
@@ -586,12 +597,12 @@ export const validateAppointmentEntities = async (
       }
       
       // If we still have missing services, return error
-      if (services.length !== serviceIds.length) {
-        return { 
-          valid: false, 
-          message: "One or more services not found" 
-        };
-      }
+      // if (services.length !== serviceIds.length) {
+      //   return { 
+      //     valid: false, 
+      //     message: "One or more services not found" 
+      //   };
+      // }
       
       // Calculate total duration and price
       for (const service of services) {
@@ -704,14 +715,14 @@ export const prepareAppointmentData = (
 ) => {
   const discountAmount = discount || 0;
   const finalPrice = totalPrice - discountAmount;
-  
+
   const appointmentServices = services.map(service => ({
     serviceId: service._id,
     name: service.name,
     duration: service.duration,
     price: service.price
   }));
-  
+
   let appointmentPackage = null;
   if (packageData) {
     appointmentPackage = {
@@ -719,30 +730,30 @@ export const prepareAppointmentData = (
       name: packageData.name,
       duration: packageData.duration,
       price: packageData.price,
-      services: packageData.services.map((svc: any) => ({
-        serviceId: svc.serviceId,
+      services: packageData.services?.map((svc: any) => ({
+        serviceId: svc.serviceId || svc._id,
         name: svc.name,
         duration: svc.duration,
         price: svc.price
-      }))
+      })) || []
     };
   }
-  
+
   return {
     clientId: client._id,
     clientName: client.name,
     clientEmail: client.email,
     clientPhone: client.phoneNumber || "",
     teamMemberId: teamMember._id,
-    teamMemberName: teamMember.name, 
-    businessId: businessId, 
+    teamMemberName: teamMember.name,
+    businessId: businessId,
     date: new Date(date),
     endDate: new Date(endDate),
     startTime,
     endTime,
     duration: totalDuration,
-    // categoryId: category._id,
-    // categoryName: category.name,
+    categoryId: category?._id,
+    categoryName: category?.name,
     services: appointmentServices,
     package: appointmentPackage,
     totalPrice,
@@ -751,10 +762,9 @@ export const prepareAppointmentData = (
     currency: "INR",
     createdBy: userId,
     updatedBy: userId,
-     ...(clientModel ? { clientModel } : {}),
+    ...(clientModel ? { clientModel } : {}),
   };
 };
-
 
 // Validates required appointment fields
 export const validateRequiredAppointmentFields = (

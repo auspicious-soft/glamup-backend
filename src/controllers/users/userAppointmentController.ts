@@ -39,6 +39,7 @@ import User from "models/user/userSchema";
 import RegisteredTeamMember from "models/registeredTeamMember/registeredTeamMemberSchema";
 import { sendAppointmentBookedEmailClient, sendAppointmentCanceledEmailClient, sendAppointmentCompletedEmailClient, sendAppointmentConfirmedEmailClient } from "utils/mails/mail";
 import RegisteredClient from "models/registeredClient/registeredClientSchema";
+import Package from "models/package/packageSchema";
 
 // Helper function to calculate end time based on services duration
 const calculateEndTimeFromServices = async (
@@ -109,7 +110,6 @@ export const createAppointment = async (req: Request, res: Response) => {
 
     // Handle new client creation if isNewClient is true
     let finalClientId = clientId;
-    console.log(user.businessRole,"businessRole")
     if (isNewClient === true && user.businessRole !== "client") {
       // Validate required fields for new client
       if (!name || !phoneNumber || !countryCallingCode || !countryCode) {
@@ -198,105 +198,113 @@ export const createAppointment = async (req: Request, res: Response) => {
 
     // Validate and parse serviceIds
     let parsedServiceIds: string[] = [];
-    if (typeof serviceIds === "string") {
-      // Split comma-separated string and trim whitespace
-      parsedServiceIds = serviceIds
-        .split(",")
-        .map((id) => id.trim())
-        .filter((id) => id);
-    } else if (Array.isArray(serviceIds)) {
-      parsedServiceIds = serviceIds.map((id) => id.toString());
-    }
+  if (!packageId || (serviceIds && serviceIds.length > 0)) {
+      if (typeof serviceIds === "string") {
+        // Split comma-separated string and trim whitespace
+        parsedServiceIds = serviceIds
+          .split(",")
+          .map((id) => id.trim())
+          .filter((id) => id);
+      } else if (Array.isArray(serviceIds)) {
+        parsedServiceIds = serviceIds.map((id) => id.toString());
+      }
 
-    // Validate that serviceIds is not empty and contains valid ObjectIds
-    if (!parsedServiceIds.length) {
-      await session.abortTransaction();
-      session.endSession();
-      return errorResponseHandler(
-        "At least one service ID is required",
-        httpStatusCode.BAD_REQUEST,
-        res
-      );
-    }
-
-    // Validate each service ID
-    for (const id of parsedServiceIds) {
-      if (!mongoose.Types.ObjectId.isValid(id)) {
+      // Validate that serviceIds is not empty when no packageId is provided
+      if (!packageId && !parsedServiceIds.length) {
         await session.abortTransaction();
         session.endSession();
         return errorResponseHandler(
-          `Invalid service ID: ${id}`,
+          "At least one service ID is required when no package is provided",
           httpStatusCode.BAD_REQUEST,
           res
         );
       }
+
+      // Validate each service ID
+      for (const id of parsedServiceIds) {
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+          await session.abortTransaction();
+          session.endSession();
+          return errorResponseHandler(
+            `Invalid service ID: ${id}`,
+            httpStatusCode.BAD_REQUEST,
+            res
+          );
+        }
+      }
     }
 
     // Validate required fields for appointment
-    if (
+  if (
       !finalClientId ||
       !teamMemberId ||
       !startDate ||
       !startTime ||
-      !serviceIds ||
-      (Array.isArray(serviceIds) && serviceIds.length === 0)
+      (!packageId && (!serviceIds || (Array.isArray(serviceIds) && serviceIds.length === 0)))
     ) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
-        "Client, team member, date, time, and services are required",
+        "Client, team member, date, time, and either services or a package are required",
         httpStatusCode.BAD_REQUEST,
         res
       );
     }
 
     // Get the category from the first service - check both custom and global services
-    let service;
+   let service;
     let categoryId;
-
-    // First try to find the service in business-specific services
-    service = await Service.findById(serviceIds[0]).session(session);
-
-    // If not found, check in global services
-    if (!service) {
-      // Find in global services from the business's selected categories
-      const business = await Business.findById(businessId).session(session);
-      if (!business) {
+    if (packageId && (!serviceIds || serviceIds.length === 0)) {
+      const packageData = await Package.findById(packageId).session(session);
+      if (!packageData) {
         await session.abortTransaction();
         session.endSession();
         return errorResponseHandler(
-          "Business not found",
+          "Package not found",
           httpStatusCode.BAD_REQUEST,
           res
         );
       }
-
-      // Get the business's selected global categories
-      const selectedCategories = business.selectedCategories || [];
-
-      // Find the global service within the selected categories
-      for (const catId of selectedCategories) {
-        const category = await Category.findById(catId)
-          .populate("services")
-          .session(session);
-        const categoryServices = category?.get("services");
-        if (category && categoryServices) {
-          const globalService = categoryServices.find(
-            (s: any) => s._id.toString() === serviceIds[0]
+      categoryId = packageData.categoryId; // Assuming Package has a categoryId field
+      service = packageData.services?.[0]; // Use first service for compatibility, if needed
+    } else {
+      // Original service-based logic
+      service = await Service.findById(parsedServiceIds[0]).session(session);
+      if (!service) {
+        const business = await Business.findById(businessId).session(session);
+        if (!business) {
+          await session.abortTransaction();
+          session.endSession();
+          return errorResponseHandler(
+            "Business not found",
+            httpStatusCode.BAD_REQUEST,
+            res
           );
+        }
 
-          if (globalService) {
-            service = globalService;
-            categoryId = catId;
-            break;
+        const selectedCategories = business.selectedCategories || [];
+        for (const catId of selectedCategories) {
+          const category = await Category.findById(catId)
+            .populate("services")
+            .session(session);
+          const categoryServices = category?.get("services");
+          if (category && categoryServices) {
+            const globalService = categoryServices.find(
+              (s: any) => s._id.toString() === parsedServiceIds[0]
+            );
+            if (globalService) {
+              service = globalService;
+              categoryId = catId;
+              break;
+            }
           }
         }
+      } else {
+        categoryId = service.categoryId;
       }
-    } else {
-      categoryId = service.categoryId;
     }
 
-    if (!service) {
+    if (!service && !packageId) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
@@ -310,17 +318,18 @@ export const createAppointment = async (req: Request, res: Response) => {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
-        "Could not determine category for the service",
+        "Could not determine category for the service or package",
         httpStatusCode.BAD_REQUEST,
         res
       );
     }
 
     // Check if the team member is available at the requested time
-    const finalEndTime =
-      endTime || (await calculateEndTimeFromServices(startTime, serviceIds));
+const finalEndTime =
+      endTime || (packageId && (!serviceIds || serviceIds.length === 0)
+        ? (await Package.findById(packageId).session(session))?.duration
+        : await calculateEndTimeFromServices(startTime, parsedServiceIds)) || startTime;
 
-    // Pass clientId to check for duplicate bookings by the same client
     const isAvailable = await isTimeSlotAvailable(
       teamMemberId,
       new Date(startDate),
