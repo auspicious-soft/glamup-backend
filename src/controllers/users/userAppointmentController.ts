@@ -22,11 +22,10 @@ import {
   formatDateForResponse,
   preparePaginationMetadata,
   prepareTeamMemberResponse,
-  validateRequiredAppointmentFields, 
+  validateRequiredAppointmentFields,
 } from "../../utils/appointment/appointmentUtils";
 import {
   validateUserAuth,
-
   startSession,
   handleTransactionError,
 } from "../../utils/user/usercontrollerUtils";
@@ -37,7 +36,12 @@ import Category from "models/category/categorySchema";
 import Client from "models/client/clientSchema";
 import User from "models/user/userSchema";
 import RegisteredTeamMember from "models/registeredTeamMember/registeredTeamMemberSchema";
-import { sendAppointmentBookedEmailClient, sendAppointmentCanceledEmailClient, sendAppointmentCompletedEmailClient, sendAppointmentConfirmedEmailClient } from "utils/mails/mail";
+import {
+  sendAppointmentBookedEmailClient,
+  sendAppointmentCanceledEmailClient,
+  sendAppointmentCompletedEmailClient,
+  sendAppointmentConfirmedEmailClient,
+} from "utils/mails/mail";
 import RegisteredClient from "models/registeredClient/registeredClientSchema";
 import Package from "models/package/packageSchema";
 
@@ -54,6 +58,29 @@ const calculateEndTimeFromServices = async (
     (total, service) => total + (service.duration || 0),
     0
   );
+
+  // Parse start time
+  const [hours, minutes] = startTime.split(":").map(Number);
+  let totalMinutes = hours * 60 + minutes + totalDuration;
+
+  // Calculate end time
+  const endHours = Math.floor(totalMinutes / 60) % 24;
+  const endMinutes = totalMinutes % 60;
+
+  // Format as HH:MM
+  return `${endHours.toString().padStart(2, "0")}:${endMinutes.toString().padStart(2, "0")}`;
+};
+
+const calculateEndTimeFromPackage = async (
+  startTime: string,
+  packageId: string,
+  session: mongoose.ClientSession
+): Promise<string> => {
+  const packageData = await Package.findById(packageId).session(session);
+  if (!packageData) {
+    throw new Error("Package not found");
+  }
+  const totalDuration = packageData.duration || 0;
 
   // Parse start time
   const [hours, minutes] = startTime.split(":").map(Number);
@@ -198,7 +225,7 @@ export const createAppointment = async (req: Request, res: Response) => {
 
     // Validate and parse serviceIds
     let parsedServiceIds: string[] = [];
-  if (!packageId || (serviceIds && serviceIds.length > 0)) {
+    if (!packageId || (serviceIds && serviceIds.length > 0)) {
       if (typeof serviceIds === "string") {
         // Split comma-separated string and trim whitespace
         parsedServiceIds = serviceIds
@@ -235,12 +262,13 @@ export const createAppointment = async (req: Request, res: Response) => {
     }
 
     // Validate required fields for appointment
-  if (
+    if (
       !finalClientId ||
       !teamMemberId ||
       !startDate ||
       !startTime ||
-      (!packageId && (!serviceIds || (Array.isArray(serviceIds) && serviceIds.length === 0)))
+      (!packageId &&
+        (!serviceIds || (Array.isArray(serviceIds) && serviceIds.length === 0)))
     ) {
       await session.abortTransaction();
       session.endSession();
@@ -252,7 +280,7 @@ export const createAppointment = async (req: Request, res: Response) => {
     }
 
     // Get the category from the first service - check both custom and global services
-   let service;
+    let service;
     let categoryId;
     if (packageId && (!serviceIds || serviceIds.length === 0)) {
       const packageData = await Package.findById(packageId).session(session);
@@ -325,10 +353,12 @@ export const createAppointment = async (req: Request, res: Response) => {
     }
 
     // Check if the team member is available at the requested time
-const finalEndTime =
-      endTime || (packageId && (!serviceIds || serviceIds.length === 0)
+    const finalEndTime =
+      endTime ||
+      (packageId && (!serviceIds || serviceIds.length === 0)
         ? (await Package.findById(packageId).session(session))?.duration
-        : await calculateEndTimeFromServices(startTime, parsedServiceIds)) || startTime;
+        : await calculateEndTimeFromServices(startTime, parsedServiceIds)) ||
+      startTime;
 
     const isAvailable = await isTimeSlotAvailable(
       teamMemberId,
@@ -389,11 +419,14 @@ const finalEndTime =
       new mongoose.Types.ObjectId(userId)
     );
 
-    if (validationResult.client && validationResult.client.constructor?.modelName === "RegisteredClient") {
-  appointmentData.clientModel = "RegisteredClient";
-} else {
-  appointmentData.clientModel = "Client";
-}
+    if (
+      validationResult.client &&
+      validationResult.client.constructor?.modelName === "RegisteredClient"
+    ) {
+      appointmentData.clientModel = "RegisteredClient";
+    } else {
+      appointmentData.clientModel = "Client";
+    }
 
     const newAppointment = await Appointment.create([appointmentData], {
       session,
@@ -407,13 +440,14 @@ const finalEndTime =
       const client = validationResult.client;
       const business = await Business.findById(businessId);
 
-       if (
-    (!validationResult.client?.createdVia || validationResult.client.createdVia !== "client_booking") &&
-    client &&
-    client.email &&
-    business &&
-    business.businessName
-  ) {
+      if (
+        (!validationResult.client?.createdVia ||
+          validationResult.client.createdVia !== "client_booking") &&
+        client &&
+        client.email &&
+        business &&
+        business.businessName
+      ) {
         await sendAppointmentBookedEmailClient(
           client.email,
           client.name, // or client.fullName if that's the field
@@ -524,57 +558,59 @@ export const getAppointmentsByDate = async (req: Request, res: Response) => {
       .limit(pagination.limit)
       .lean();
 
-for (const appt of appointments) {
-  const rawClient = appt.clientId;
+    for (const appt of appointments) {
+      const rawClient = appt.clientId;
 
-  if (
-    rawClient &&
-    appt.clientModel === "RegisteredClient" &&
-    typeof rawClient === "object" &&
-    !("toHexString" in rawClient)
-  ) {
-    const clientObj = (rawClient as any).toObject ? (rawClient as any).toObject() : rawClient;
+      if (
+        rawClient &&
+        appt.clientModel === "RegisteredClient" &&
+        typeof rawClient === "object" &&
+        !("toHexString" in rawClient)
+      ) {
+        const clientObj = (rawClient as any).toObject
+          ? (rawClient as any).toObject()
+          : rawClient;
 
-    clientObj.name = clientObj.fullName || clientObj.name || "";
-    delete clientObj.fullName;
-    clientObj.profilePicture = clientObj.profilePic || clientObj.profilePicture || "";
-    delete clientObj.profilePic;
-    // Assign cleaned object back to appointment
-    (appt as any).clientId = clientObj;
-  }
+        clientObj.name = clientObj.fullName || clientObj.name || "";
+        delete clientObj.fullName;
+        clientObj.profilePicture =
+          clientObj.profilePic || clientObj.profilePicture || "";
+        delete clientObj.profilePic;
+        // Assign cleaned object back to appointment
+        (appt as any).clientId = clientObj;
+      }
 
-  // If no clientId but client_booking, fetch RegisteredClient
-  if (
-    (!appt.clientId || appt.clientId === null) &&
-    appt.createdVia === "client_booking"
-  ) {
-    const registeredClient = await RegisteredClient.findById(rawClient);
+      // If no clientId but client_booking, fetch RegisteredClient
+      if (
+        (!appt.clientId || appt.clientId === null) &&
+        appt.createdVia === "client_booking"
+      ) {
+        const registeredClient = await RegisteredClient.findById(rawClient);
 
-    if (registeredClient) {
-      (appt as any).clientDetails = {
-        _id: registeredClient._id,
-        name: registeredClient.fullName || "",
-        email: registeredClient.email || "",
-        phoneNumber: registeredClient.phoneNumber || "",
-        countryCode: registeredClient.countryCode || "",
-        countryCallingCode: registeredClient.countryCallingCode || "",
-        profilePicture: registeredClient.profilePic || "",
-        tags: [],
-        businessId: null,
-        preferredServices: [],
-        preferredTeamMembers: [],
-        lastVisit: null,
-        isActive: true,
-        isDeleted: false,
-        clientId: null,
-        createdAt: registeredClient.createdAt,
-        updatedAt: registeredClient.updatedAt,
-        __v: 0,
-      };
+        if (registeredClient) {
+          (appt as any).clientDetails = {
+            _id: registeredClient._id,
+            name: registeredClient.fullName || "",
+            email: registeredClient.email || "",
+            phoneNumber: registeredClient.phoneNumber || "",
+            countryCode: registeredClient.countryCode || "",
+            countryCallingCode: registeredClient.countryCallingCode || "",
+            profilePicture: registeredClient.profilePic || "",
+            tags: [],
+            businessId: null,
+            preferredServices: [],
+            preferredTeamMembers: [],
+            lastVisit: null,
+            isActive: true,
+            isDeleted: false,
+            clientId: null,
+            createdAt: registeredClient.createdAt,
+            updatedAt: registeredClient.updatedAt,
+            __v: 0,
+          };
+        }
+      }
     }
-  }
-}
-
 
     const paginationMetadata = preparePaginationMetadata(
       totalAppointments,
@@ -774,6 +810,18 @@ export const updateAppointment = async (req: Request, res: Response) => {
     if (!userId) return;
 
     const { appointmentId } = req.params;
+    const {
+      teamMemberId,
+      status,
+      serviceIds,
+      packageId,
+      startDate,
+      endDate,
+      startTime,
+      endTime,
+      discount,
+      cancellationReason,
+    } = req.body;
 
     const businessId = await validateBusinessProfile(userId, res, session);
     if (!businessId) return;
@@ -786,30 +834,24 @@ export const updateAppointment = async (req: Request, res: Response) => {
     );
     if (!existingAppointment) return;
 
-    // Check if this appointment was created by a client
     let isClientBooking = existingAppointment.createdVia === "client_booking";
-
     if (!isClientBooking) {
       const clientAppointment = await ClientAppointment.findOne({
         appointmentId: existingAppointment.appointmentId,
         isDeleted: false,
       });
-
       isClientBooking = !!clientAppointment;
     }
 
-    // For client bookings, only allow status updates and cancellation
     if (isClientBooking) {
-      const { status, cancellationReason } = req.body;
-
       if (
-        req.body.teamMemberId ||
-        req.body.categoryId ||
-        req.body.serviceIds ||
-        req.body.startDate ||
-        req.body.endDate ||
-        req.body.startTime ||
-        req.body.endTime
+        teamMemberId ||
+        serviceIds ||
+        packageId ||
+        startDate ||
+        endDate ||
+        startTime ||
+        endTime
       ) {
         await session.abortTransaction();
         session.endSession();
@@ -846,7 +888,8 @@ export const updateAppointment = async (req: Request, res: Response) => {
             {
               $set: {
                 status: "CANCELLED",
-                cancellationReason: cancellationReason || "Cancelled by business",
+                cancellationReason:
+                  cancellationReason || "Cancelled by business",
                 cancellationDate: new Date(),
                 cancellationBy: "business",
               },
@@ -880,69 +923,187 @@ export const updateAppointment = async (req: Request, res: Response) => {
         }
       }
     } else {
-      // For business-created appointments, proceed with normal update flow
-      const { teamMemberId, status, serviceIds } = req.body;
-
       let categoryId;
-      if (serviceIds && serviceIds.length > 0) {
-        let service = await Service.findById(serviceIds[0]);
+      let finalServiceIds: string[] = [];
+      let finalPackageId: string | undefined = undefined;
+      let finalEndTime = endTime || existingAppointment.endTime;
+      let totalDuration = existingAppointment.duration;
+      let totalPrice = existingAppointment.totalPrice;
 
-        if (!service) {
-          const business = await Business.findById(existingAppointment.businessId);
-          if (!business) {
+      // Handle serviceIds or packageId update
+      if (serviceIds || packageId) {
+        if (packageId && (!serviceIds || serviceIds.length === 0)) {
+          // Updating to package-based appointment
+          const packageData =
+            await Package.findById(packageId).session(session);
+          if (!packageData) {
             await session.abortTransaction();
             session.endSession();
-            return errorResponseHandler("Business not found", httpStatusCode.BAD_REQUEST, res);
+            return errorResponseHandler(
+              "Package not found",
+              httpStatusCode.BAD_REQUEST,
+              res
+            );
+          }
+          categoryId = packageData.categoryId;
+          finalServiceIds = packageData.services.map((s: any) =>
+            s._id.toString()
+          );
+          finalPackageId = packageId;
+          totalDuration = packageData.duration || 0;
+          totalPrice = packageData.price || 0;
+          if (startTime) {
+            finalEndTime = await calculateEndTimeFromPackage(
+              startTime,
+              packageId,
+              session
+            );
+          }
+        } else if (serviceIds && serviceIds.length > 0) {
+          // Updating to service-based appointment
+          let parsedServiceIds: string[] = [];
+          if (typeof serviceIds === "string") {
+            parsedServiceIds = serviceIds
+              .split(",")
+              .map((id) => id.trim())
+              .filter((id) => id);
+          } else if (Array.isArray(serviceIds)) {
+            parsedServiceIds = serviceIds.map((id) => id.toString());
           }
 
-          const selectedCategories = business.selectedCategories || [];
-
-          for (const catId of selectedCategories) {
-            const category = await Category.findById(catId).populate("services");
-            const categoryServices = category?.get("services");
-            if (category && categoryServices) {
-              const globalService = categoryServices.find(
-                (s: any) => s._id.toString() === serviceIds[0]
+          for (const id of parsedServiceIds) {
+            if (!mongoose.Types.ObjectId.isValid(id)) {
+              await session.abortTransaction();
+              session.endSession();
+              return errorResponseHandler(
+                `Invalid service ID: ${id}`,
+                httpStatusCode.BAD_REQUEST,
+                res
               );
-
-              if (globalService) {
-                service = globalService;
-                categoryId = catId;
-                break;
-              }
             }
           }
+
+          let service = await Service.findById(parsedServiceIds[0]).session(
+            session
+          );
+          if (!service) {
+            const business = await Business.findById(
+              existingAppointment.businessId
+            ).session(session);
+            if (!business) {
+              await session.abortTransaction();
+              session.endSession();
+              return errorResponseHandler(
+                "Business not found",
+                httpStatusCode.BAD_REQUEST,
+                res
+              );
+            }
+
+            const selectedCategories = business.selectedCategories || [];
+            for (const catId of selectedCategories) {
+              const category = await Category.findById(catId)
+                .populate("services")
+                .session(session);
+              const categoryServices = category?.get("services");
+              if (category && categoryServices) {
+                const globalService = categoryServices.find(
+                  (s: any) => s._id.toString() === parsedServiceIds[0]
+                );
+                if (globalService) {
+                  service = globalService;
+                  categoryId = catId;
+                  break;
+                }
+              }
+            }
+          } else {
+            categoryId = service.categoryId;
+          }
+
+          if (!service) {
+            await session.abortTransaction();
+            session.endSession();
+            return errorResponseHandler(
+              "Service not found in either business services or global categories",
+              httpStatusCode.BAD_REQUEST,
+              res
+            );
+          }
+
+          if (!categoryId) {
+            await session.abortTransaction();
+            session.endSession();
+            return errorResponseHandler(
+              "Could not determine category for the service",
+              httpStatusCode.BAD_REQUEST,
+              res
+            );
+          }
+
+          finalServiceIds = parsedServiceIds;
+          finalPackageId = undefined;
+          const services = await Service.find({
+            _id: { $in: parsedServiceIds },
+          }).session(session);
+          totalDuration = services.reduce(
+            (total, service) => total + (service.duration || 0),
+            0
+          );
+          totalPrice = services.reduce(
+            (total, service) => total + (service.price || 0),
+            0
+          );
+          if (startTime) {
+            finalEndTime = await calculateEndTimeFromServices(
+              startTime,
+              parsedServiceIds
+            );
+          }
         } else {
-          categoryId = service.categoryId;
-        }
-
-        if (!service) {
           await session.abortTransaction();
           session.endSession();
           return errorResponseHandler(
-            "Service not found in either business services or global categories",
+            "Either serviceIds or packageId must be provided",
             httpStatusCode.BAD_REQUEST,
             res
           );
         }
-
-        if (!categoryId) {
-          await session.abortTransaction();
-          session.endSession();
-          return errorResponseHandler(
-            "Could not determine category for the service",
-            httpStatusCode.BAD_REQUEST,
-            res
-          );
-        }
-
-        req.body.categoryId = categoryId;
+      } else {
+        // No service or package update, use existing values
+        finalServiceIds = existingAppointment.services.map((s: any) =>
+          s._id.toString()
+        );
+        finalPackageId = existingAppointment.packageId?.toString();
+        categoryId = existingAppointment.categoryId;
       }
 
-      const teamMemberChanged = isTeamMemberChanged(teamMemberId, existingAppointment);
-
-      if (teamMemberChanged) {
-        const updateData = prepareAppointmentUpdateData(req, existingAppointment);
+      // Validate team member availability if changed
+      const teamMemberChanged = isTeamMemberChanged(
+        teamMemberId,
+        existingAppointment
+      );
+      if (
+        teamMemberChanged ||
+        startDate ||
+        startTime ||
+        endTime 
+        // serviceIds ||
+        // packageId
+      ) {
+        const updateData = {
+          teamMemberId: teamMemberId || existingAppointment.teamMemberId,
+          startDate: startDate ? new Date(startDate) : existingAppointment.date,
+          endDate: endDate
+            ? new Date(endDate)
+            : existingAppointment.endDate || existingAppointment.date,
+          startTime: startTime || existingAppointment.startTime,
+          endTime: finalEndTime,
+          clientId: existingAppointment.clientId,
+          serviceIds: finalServiceIds,
+          packageId: finalPackageId,
+          categoryId,
+        };
 
         const isAvailable = await isTimeSlotAvailable(
           updateData.teamMemberId,
@@ -964,21 +1125,20 @@ export const updateAppointment = async (req: Request, res: Response) => {
         }
       }
 
-      const updateData = prepareAppointmentUpdateData(req, existingAppointment);
-      const safeCategoryId =
-        updateData.categoryId && updateData.categoryId !== ""
-          ? updateData.categoryId
-          : undefined;
-
+      // Validate appointment entities
       const validationResult = await validateAppointmentEntities(
-        updateData.clientId,
-        updateData.teamMemberId,
-        safeCategoryId,
-        updateData.serviceIds,
-        updateData.startDate,
-        updateData.endDate,
+        existingAppointment.clientId,
+        teamMemberId || existingAppointment.teamMemberId,
+        categoryId || existingAppointment.categoryId.toString(),
+        finalServiceIds, // Use finalServiceIds directly as it's guaranteed to be string[]
+        startDate ? new Date(startDate) : existingAppointment.date,
+        endDate
+          ? new Date(endDate)
+          : existingAppointment.endDate || existingAppointment.date,
+        finalPackageId,
+        businessId.toString(),
         undefined,
-        businessId.toString()
+        session
       );
 
       if (!validationResult.valid) {
@@ -991,23 +1151,37 @@ export const updateAppointment = async (req: Request, res: Response) => {
         );
       }
 
+      // Prepare appointment data
       const appointmentData = prepareAppointmentData(
         validationResult.client,
         validationResult.teamMember,
         validationResult.category,
         validationResult.services || [],
-        null,
+        validationResult.packageData,
         businessId,
-        updateData.startDate,
-        updateData.endDate,
-        updateData.startTime,
-        updateData.endTime,
-        validationResult.totalDuration ?? existingAppointment.duration,
-        validationResult.totalPrice ?? existingAppointment.totalPrice,
-        existingAppointment.discount || 0,
+        startDate ? new Date(startDate) : existingAppointment.date,
+        endDate
+          ? new Date(endDate)
+          : existingAppointment.endDate || existingAppointment.date,
+        startTime || existingAppointment.startTime,
+        finalEndTime,
+        totalDuration,
+        totalPrice,
+        discount !== undefined ? discount : existingAppointment.discount,
         new mongoose.Types.ObjectId(userId)
       );
 
+      // Update clientModel if necessary
+      if (
+        validationResult.client &&
+        validationResult.client.constructor?.modelName === "RegisteredClient"
+      ) {
+        appointmentData.clientModel = "RegisteredClient";
+      } else {
+        appointmentData.clientModel = "Client";
+      }
+
+      // Update appointment
       await Appointment.findByIdAndUpdate(
         appointmentId,
         {
@@ -1024,47 +1198,53 @@ export const updateAppointment = async (req: Request, res: Response) => {
     const updatedAppointment =
       await Appointment.findById(appointmentId).session(session);
 
-    if (req.body.status) {
+    if (status && updatedAppointment) {
       let client: any = null;
-      if (updatedAppointment) {
-        if (updatedAppointment.clientModel === "RegisteredClient") {
-          client = await RegisteredClient.findById(updatedAppointment.clientId);
-        } else {
-          client = await Client.findById(updatedAppointment.clientId);
-        }
+      if (updatedAppointment.clientModel === "RegisteredClient") {
+        client = await RegisteredClient.findById(
+          updatedAppointment.clientId
+        ).session(session);
+      } else {
+        client = await Client.findById(updatedAppointment.clientId).session(
+          session
+        );
+      }
 
-        const business = await Business.findById(updatedAppointment.businessId);
+      const business = await Business.findById(
+        updatedAppointment.businessId
+      ).session(session);
 
-        if (client && client.email && business) {
-          const serviceNames = (updatedAppointment.services || []).map((s: any) => s.name);
+      if (client && client.email && business) {
+        const serviceNames = (updatedAppointment.services || []).map(
+          (s: any) => s.name
+        );
 
-          if (req.body.status === "CONFIRMED") {
-            await sendAppointmentConfirmedEmailClient(
-              client.email,
-              client.name || client.fullName || "",
-              business.businessName,
-              updatedAppointment.date.toISOString().split("T")[0],
-              updatedAppointment.startTime,
-              serviceNames
-            );
-          } else if (req.body.status === "CANCELLED") {
-            await sendAppointmentCanceledEmailClient(
-              client.email,
-              client.name || client.fullName || "",
-              business.businessName,
-              updatedAppointment.date.toISOString().split("T")[0],
-              updatedAppointment.startTime,
-              req.body.cancellationReason || ""
-            );
-          } else if (req.body.status === "COMPLETED") {
-            await sendAppointmentCompletedEmailClient(
-              client.email,
-              client.name || client.fullName || "",
-              business.businessName,
-              updatedAppointment.date.toISOString().split("T")[0],
-              serviceNames
-            );
-          }
+        if (status === "CONFIRMED") {
+          await sendAppointmentConfirmedEmailClient(
+            client.email,
+            client.name || client.fullName || "",
+            business.businessName,
+            updatedAppointment.date.toISOString().split("T")[0],
+            updatedAppointment.startTime,
+            serviceNames
+          );
+        } else if (status === "CANCELLED") {
+          await sendAppointmentCanceledEmailClient(
+            client.email,
+            client.name || client.fullName || "",
+            business.businessName,
+            updatedAppointment.date.toISOString().split("T")[0],
+            updatedAppointment.startTime,
+            cancellationReason || ""
+          );
+        } else if (status === "COMPLETED") {
+          await sendAppointmentCompletedEmailClient(
+            client.email,
+            client.name || client.fullName || "",
+            business.businessName,
+            updatedAppointment.date.toISOString().split("T")[0],
+            serviceNames
+          );
         }
       }
     }
