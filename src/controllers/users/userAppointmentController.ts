@@ -1079,52 +1079,44 @@ export const updateAppointment = async (req: Request, res: Response) => {
       }
 
       // Validate team member availability if changed
-      const teamMemberChanged = isTeamMemberChanged(
-        teamMemberId,
-        existingAppointment
-      );
-      if (
-        teamMemberChanged ||
-        startDate ||
-        startTime ||
-        endTime 
-        // serviceIds ||
-        // packageId
-      ) {
-        const updateData = {
-          teamMemberId: teamMemberId || existingAppointment.teamMemberId,
-          startDate: startDate ? new Date(startDate) : existingAppointment.date,
-          endDate: endDate
-            ? new Date(endDate)
-            : existingAppointment.endDate || existingAppointment.date,
-          startTime: startTime || existingAppointment.startTime,
-          endTime: finalEndTime,
-          clientId: existingAppointment.clientId,
-          serviceIds: finalServiceIds,
-          packageId: finalPackageId,
-          categoryId,
-        };
+      const teamMemberChanged = isTeamMemberChanged(teamMemberId, existingAppointment);
+const startDateChanged = startDate && new Date(startDate).toISOString() !== existingAppointment.date.toISOString();
+const startTimeChanged = startTime && startTime !== existingAppointment.startTime;
+const endTimeChanged = endTime && endTime !== existingAppointment.endTime;
+     
+if (teamMemberChanged || startDateChanged || startTimeChanged || endTimeChanged) {
+  const updateData = {
+    teamMemberId: teamMemberId || existingAppointment.teamMemberId,
+    startDate: startDate ? new Date(startDate) : existingAppointment.date,
+    endDate: endDate ? new Date(endDate) : existingAppointment.endDate || existingAppointment.date,
+    startTime: startTime || existingAppointment.startTime,
+    endTime: finalEndTime,
+    clientId: existingAppointment.clientId,
+    serviceIds: finalServiceIds,
+    packageId: finalPackageId,
+    categoryId,
+  };
 
-        const isAvailable = await isTimeSlotAvailable(
-          updateData.teamMemberId,
-          updateData.startDate,
-          updateData.endDate,
-          updateData.startTime,
-          updateData.endTime,
-          appointmentId
-        );
+  const isAvailable = await isTimeSlotAvailable(
+    updateData.teamMemberId,
+    updateData.startDate,
+    updateData.endDate,
+    updateData.startTime,
+    updateData.endTime,
+    existingAppointment.clientId.toString(),
+    appointmentId
+  );
 
-        if (!isAvailable) {
-          await session.abortTransaction();
-          session.endSession();
-          return errorResponseHandler(
-            "Selected time slot is not available for the team member",
-            httpStatusCode.BAD_REQUEST,
-            res
-          );
-        }
-      }
-
+  if (!isAvailable) {
+    await session.abortTransaction();
+    session.endSession();
+    return errorResponseHandler(
+      "Selected time slot is not available for the team member",
+      httpStatusCode.BAD_REQUEST,
+      res
+    );
+  }
+}
       // Validate appointment entities
       const validationResult = await validateAppointmentEntities(
         existingAppointment.clientId,
