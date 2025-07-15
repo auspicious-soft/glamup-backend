@@ -395,16 +395,27 @@ export const getAllPackages = async (req: Request, res: Response) => {
         const existingServices = await Service.find({
           _id: { $in: serviceIds },
           isDeleted: false
-        }, { _id: 1 }) as { _id: mongoose.Types.ObjectId }[];
+        }, { _id: 1, teamMembers: 1 } // Select only _id and teamMembers
+        ).lean();
         
-        const existingServiceIds = new Set(existingServices.map(svc => svc._id.toString()));
-        
-        // Filter out deleted services
-        packageObj.services = packageObj.services.filter(svc => 
-          existingServiceIds.has(svc.serviceId.toString())
+       const existingServiceMap = new Map(
+          existingServices.map(svc => [
+            svc._id.toString(),
+            svc.teamMembers || [] // teamMembers array or empty if undefined
+          ])
         );
+        
+     packageObj.services = packageObj.services
+          .filter(svc => existingServiceMap.has(svc.serviceId.toString()))
+          .map(svc => ({
+            ...svc,
+            teamMembers: existingServiceMap.get(svc.serviceId.toString())?.map(tm => ({
+              memberId: tm.memberId,
+              name: tm.name
+            })) || []
+          }));
       }
-      
+
       return packageObj;
     }));
 
