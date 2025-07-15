@@ -1187,3 +1187,150 @@ export const updateClientAppointment = async (req: Request, res: Response) => {
     return errorResponseHandler(parsedError.message, parsedError.code, res);
   }
 };
+
+// Get history of services booked by a client
+export const getClientServiceHistory = async (req: Request, res: Response) => {
+  try {
+    const { clientId } = req.params;
+    const { page = "1", limit = "10", sort = "date" } = req.query;
+
+    // Validate client ID
+    if (!mongoose.Types.ObjectId.isValid(clientId)) {
+      return errorResponseHandler(
+        "Invalid client ID format",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    // Check if client exists
+    const client = await RegisteredClient.findById(clientId);
+    if (!client) {
+      return errorResponseHandler(
+        "Client not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    // Build query
+    const query: any = {
+      clientId: new mongoose.Types.ObjectId(clientId),
+      isDeleted: false,
+      status: { $in: ["PENDING", "CONFIRMED", "COMPLETED"] }, // Include only non-cancelled appointments
+    };
+
+    // Log the number of matching appointments
+    const totalAppointments = await ClientAppointment.countDocuments(query);
+    console.log(`Total appointments found for client ${clientId}: ${totalAppointments}`);
+
+    if (totalAppointments === 0) {
+      return successResponse(res, "No appointments found for client", {
+        client: {
+          _id: client._id,
+          name: client.fullName,
+          email: client.email,
+        },
+        pagination: {
+          total: 0,
+          page: parseInt(page as string),
+          limit: parseInt(limit as string),
+          pages: 0,
+        },
+        services: [],
+      });
+    }
+    // Check if appointments have services
+    const appointmentsWithServices = await ClientAppointment.find(query).select("services");
+    const appointmentsWithNonEmptyServices = appointmentsWithServices.filter(
+      (appt) => appt.services && appt.services.length > 0
+    );
+    // Pagination
+    const pageNum = parseInt(page as string);
+    const limitNum = parseInt(limit as string);
+    const skip = (pageNum - 1) * limitNum;
+
+    // Sorting
+    let sortOption: any = { date: 1, startTime: 1 };
+    if (sort === "-date") {
+      sortOption = { date: -1, startTime: -1 };
+    }
+
+    // Aggregate to get service history
+    const serviceHistory = await ClientAppointment.aggregate([
+      { $match: query },
+      { $unwind: { path: "$services", preserveNullAndEmptyArrays: true } },
+      {
+        $group: {
+          _id: "$services.serviceId",
+          name: { $first: "$services.name" },
+          count: { $sum: 1 },
+          lastBooked: { $max: "$date" },
+          appointments: {
+            $push: {
+              appointmentId: "$_id",
+              date: "$date",
+              startTime: "$startTime",
+              businessId: "$businessId",
+              businessName: "$businessName",
+              status: "$status",
+            },
+          },
+        },
+      },
+      { $match: { _id: { $ne: null } } }, 
+      { $sort: { count: -1, lastBooked: -1 } },
+      {
+        $facet: {
+          paginatedResults: [
+            { $skip: skip },
+            { $limit: limitNum },
+          ],
+          totalCount: [
+            { $count: "total" },
+          ],
+        },
+      },
+    ]);
+
+
+    const services = serviceHistory[0]?.paginatedResults || [];
+    const totalServices = serviceHistory[0]?.totalCount[0]?.total || 0;
+    const currentDateTime = new Date();
+    const formattedServices = services.map((service: any) => ({
+      serviceId: service._id,
+      name: service.name,
+      count: service.count,
+      lastBooked: service.lastBooked,
+      appointments: service.appointments.map((appointment: any) => {
+        const appointmentDate = new Date(appointment.date);
+        const [hours, minutes] = appointment.startTime.split(":").map(Number);
+        appointmentDate.setHours(hours, minutes, 0, 0);
+        const timeStatus = appointmentDate < currentDateTime ? "Past" : "Upcoming";
+        return {
+          ...appointment,
+          timeStatus,
+        };
+      }),
+    }));
+
+    return successResponse(res, "Client service history fetched successfully", {
+      client: {
+        _id: client._id,
+        name: client.fullName,
+        email: client.email,
+      },
+      pagination: {
+        total: totalServices,
+        page: pageNum,
+        limit: limitNum,
+        pages: Math.ceil(totalServices / limitNum),
+      },
+      services: formattedServices,
+    });
+  } catch (error: any) {
+    console.error("Error fetching client service history:", error);
+    const parsedError = errorParser(error);
+    return errorResponseHandler(parsedError.message, parsedError.code, res);
+  }
+};

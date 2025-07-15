@@ -18,7 +18,8 @@ import {
   cancelClientAppointment, 
   rescheduleClientAppointment, 
   getClientUpcomingAppointments,
-  updateClientAppointment
+  updateClientAppointment,
+  getClientServiceHistory
 } from "../controllers/client/clientAppointmentController";
 import {
   getClientProfile,
@@ -51,6 +52,7 @@ router.get("/members-by-services", getTeamMembersByServices)
 router.post("/favourite-business", addFavouriteBusiness);
 router.get("/favourite-businesses/:clientId", getFavouriteBusinesses)
 router.put('/client-appointment/:appointmentId', updateClientAppointment);
+router.get('/client-service-history/:clientId', getClientServiceHistory);
 
 // Client profile routes (auth required)
 router.get("/profile", getClientProfile);
