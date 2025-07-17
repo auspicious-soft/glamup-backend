@@ -1,5 +1,5 @@
 
-import { cancelAppointment, createAppointment, getAppointmentById, getAppointmentsByDate, getPendingAppointments, getTeamMemberAppointments, updateAppointment } from 'controllers/users/userAppointmentController';
+import { cancelAppointment, createAppointment, getAppointmentById, getAppointmentsByDate, getClientServiceHistory, getPendingAppointments, getTeamMemberAppointments, updateAppointment } from 'controllers/users/userAppointmentController';
 import { createBusinessProfile, deleteBusinessProfileImage, getAllBusinessProfiles, getBusinessProfileById, updateBusinessGlobalCategories, updateBusinessProfile } from 'controllers/users/userBusinessController';
 import { createCategory, deleteCategories, getAllCategories, getBusinessCategories, getCategoryById, swapCategoryOrder, updateCategory } from 'controllers/users/userCategoryController';
 import { createClient, deleteClients, getAllClients, getClientById, updateClientById } from 'controllers/users/userClientController';
@@ -24,6 +24,7 @@ router.get('/business-profiles', getAllBusinessProfiles);
 router.put("/update-global-categories", updateBusinessGlobalCategories);
 router.get('/business-profile/:profileId', getBusinessProfileById);
 router.put('/business-profile/:profileId', updateBusinessProfile);
+router.get('/business/service-history/:clientId', getClientServiceHistory);
 
 // Public Business Routes
 router.get('/business/:businessId/categories', getBusinessCategories);

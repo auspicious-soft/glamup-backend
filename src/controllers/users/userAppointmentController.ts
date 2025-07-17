@@ -1524,3 +1524,199 @@ export const getPendingAppointments = async (req: Request, res: Response) => {
     });
   }
 };
+
+export const getClientServiceHistory = async (req: Request, res: Response) => {
+  try {
+    // Validate user authentication
+    const userId = await validateUserAuth(req, res);
+    if (!userId) return;
+
+    // Get user to check role
+    const user = await User.findById(userId);
+    if (!user) {
+      return errorResponseHandler(
+        "User not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    // Validate business access
+    let businessId;
+    if (user.businessRole === "team-member") {
+      const teamMembership = await RegisteredTeamMember.findOne({
+        userId: userId,
+        isDeleted: false,
+        isActive: true,
+      });
+
+      if (!teamMembership) {
+        return errorResponseHandler(
+          "You don't have access to any business",
+          httpStatusCode.FORBIDDEN,
+          res
+        );
+      }
+
+      businessId = teamMembership.businessId;
+    } else {
+      businessId = await validateBusinessProfile(userId, res);
+      if (!businessId) return;
+    }
+
+    const { clientId } = req.params;
+    const { page = "1", limit = "10", sort = "date" } = req.query;
+
+    // Validate client ID
+    if (!mongoose.Types.ObjectId.isValid(clientId)) {
+      return errorResponseHandler(
+        "Invalid client ID format",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    // Check if client exists and belongs to the business
+    const client = await Client.findOne({
+      _id: clientId,
+      businessId,
+      isDeleted: false,
+    });
+
+    if (!client) {
+      return errorResponseHandler(
+        "Client not found or does not belong to this business",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    // Build query
+    const query: any = {
+      clientId: new mongoose.Types.ObjectId(clientId),
+      businessId,
+      isDeleted: false,
+      status: { $in: ["PENDING", "CONFIRMED", "COMPLETED"] }, // Include only non-cancelled appointments
+    };
+
+    // Log the number of matching appointments
+    const totalAppointments = await Appointment.countDocuments(query);
+    console.log(`Total appointments found for client ${clientId}: ${totalAppointments}`);
+
+    if (totalAppointments === 0) {
+      return successResponse(res, "No appointments found for client", {
+        client: {
+          _id: client._id,
+          name: client.name,
+          email: client.email,
+        },
+        pagination: {
+          total: 0,
+          page: parseInt(page as string),
+          limit: parseInt(limit as string),
+          pages: 0,
+        },
+        services: [],
+      });
+    }
+
+    // Check if appointments have services
+    const appointmentsWithServices = await Appointment.find(query).select("services");
+    const appointmentsWithNonEmptyServices = appointmentsWithServices.filter(
+      (appt) => appt.services && appt.services.length > 0
+    );
+
+    // Pagination
+    const pagination = preparePagination(page as string, limit as string);
+    const { skip, limit: limitNum, page: pageNum } = pagination;
+
+    // Sorting
+    let sortOption: any = { date: 1, startTime: 1 };
+    if (sort === "-date") {
+      sortOption = { date: -1, startTime: -1 };
+    }
+
+    // Aggregate to get service history
+    const serviceHistory = await Appointment.aggregate([
+      { $match: query },
+      { $unwind: { path: "$services", preserveNullAndEmptyArrays: true } },
+      {
+        $group: {
+          _id: "$services.serviceId",
+          name: { $first: "$services.name" },
+          count: { $sum: 1 },
+          lastBooked: { $max: "$date" },
+          appointments: {
+            $push: {
+              appointmentId: "$_id",
+              date: "$date",
+              startTime: "$startTime",
+              businessId: "$businessId",
+              status: "$status",
+              createdAt: "$createdAt",
+              teamMemberId: "$teamMemberId",
+            },
+          },
+        },
+      },
+      { $match: { _id: { $ne: null } } },
+      { $sort: { count: -1, lastBooked: -1 } },
+      {
+        $facet: {
+          paginatedResults: [
+            { $skip: skip },
+            { $limit: limitNum },
+          ],
+          totalCount: [
+            { $count: "total" },
+          ],
+        },
+      },
+    ]);
+
+    const services = serviceHistory[0]?.paginatedResults || [];
+    const totalServices = serviceHistory[0]?.totalCount[0]?.total || 0;
+
+    // Format services for response
+    const currentDateTime = new Date();
+    const formattedServices = services.map((service: any) => ({
+      serviceId: service.serviceId,
+      name: service.name,
+      count: service.count, // Number of times this service was used
+      lastBooked: service.lastBooked,
+      appointments: service.appointments.map((appointment: any) => {
+        const appointmentDate = new Date(appointment.date);
+        const [hours, minutes] = appointment.startTime.split(":").map(Number);
+        appointmentDate.setHours(hours, minutes, 0, 0);
+        const timeStatus = appointmentDate < currentDateTime ? "Past" : "Upcoming";
+        return {
+          appointmentId: appointment.appointmentId,
+          date: appointment.date,
+          startTime: appointment.startTime,
+          businessId: appointment.businessId,
+          status: appointment.status,
+          timeStatus,
+          createdAt: appointment.createdAt,
+          teamMemberId: appointment.teamMemberId,
+        };
+      }),
+    }));
+
+    // Prepare pagination metadata
+    const paginationMetadata = preparePaginationMetadata(totalServices, pagination);
+
+    return successResponse(res, "Client service history fetched successfully", {
+      client: {
+        _id: client._id,
+        name: client.name,
+        email: client.email,
+      },
+      // pagination: paginationMetadata,
+      services: formattedServices,
+    });
+  } catch (error: any) {
+    console.error("Error fetching client service history:", error);
+    const parsedError = errorParser(error);
+    return errorResponseHandler(parsedError.message, parsedError.code, res);
+  }
+};
