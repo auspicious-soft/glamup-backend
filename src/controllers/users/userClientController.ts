@@ -27,6 +27,7 @@ import mongoose from "mongoose";
 import RegisteredTeamMember from "models/registeredTeamMember/registeredTeamMemberSchema";
 import User from "models/user/userSchema";
 import Appointment from "models/appointment/appointmentSchema";
+import { preparePagination, preparePaginationMetadata } from "utils/appointment/appointmentUtils";
 
 // Helper function to handle file upload to S3
 const uploadProfilePictureToS3 = async (req: Request, userEmail: string): Promise<{ key: string, fullUrl: string } | null> => {
@@ -327,7 +328,7 @@ export const getClientById = async (req: Request, res: Response) => {
       );
     }
 
-      const appointments = await Appointment.find({
+    const appointments = await Appointment.find({
       clientId: client._id,
       businessId: businessId,
       isDeleted: false
@@ -350,12 +351,10 @@ export const getClientById = async (req: Request, res: Response) => {
       .populate([
         { path: "services", select: "name duration price" },
         { path: "teamMemberId", select: "name email" },
-        // { path: "categoryId", select: "name" }
       ])
       .lean();
 
-
-       const appointmentHistory = appointments.map((appt: any) => ({
+    const appointmentHistory = appointments.map((appt: any) => ({
       status: appt.status,
       description: appt.description,
       services: Array.isArray(appt.services)
@@ -376,9 +375,96 @@ export const getClientById = async (req: Request, res: Response) => {
       updatedAt: appt.updatedAt,
     }));
 
+    // Fetch service history with pagination and sorting
+    const { page = "1", limit = "10", sort = "date" } = req.query;
+    const pagination = preparePagination(page as string, limit as string);
+    const { skip, limit: limitNum, page: pageNum } = pagination;
+
+    let sortOption: any = { date: 1, startTime: 1 };
+    if (sort === "-date") {
+      sortOption = { date: -1, startTime: -1 };
+    }
+
+    const query: any = {
+      clientId: new mongoose.Types.ObjectId(clientId),
+      businessId,
+      isDeleted: false,
+      status: { $in: ["PENDING", "CONFIRMED", "COMPLETED"] },
+    };
+
+    const serviceHistory = await Appointment.aggregate([
+      { $match: query },
+      { $unwind: { path: "$services", preserveNullAndEmptyArrays: true } },
+      {
+        $group: {
+          _id: "$services.serviceId",
+          name: { $first: "$services.name" },
+          count: { $sum: 1 },
+          lastBooked: { $max: "$date" },
+          appointments: {
+            $push: {
+              appointmentId: "$_id",
+              date: "$date",
+              startTime: "$startTime",
+              businessId: "$businessId",
+              status: "$status",
+              createdAt: "$createdAt",
+              teamMemberId: "$teamMemberId",
+            },
+          },
+        },
+      },
+      { $match: { _id: { $ne: null } } },
+      { $sort: { count: -1, lastBooked: -1 } },
+      {
+        $facet: {
+          paginatedResults: [
+            { $skip: skip },
+            { $limit: limitNum },
+          ],
+          totalCount: [
+            { $count: "total" },
+          ],
+        },
+      },
+    ]);
+
+    const services = serviceHistory[0]?.paginatedResults || [];
+    const totalServices = serviceHistory[0]?.totalCount[0]?.total || 0;
+
+    const currentDateTime = new Date();
+    const formattedServices = services.map((service: any) => ({
+      serviceId: service.serviceId,
+      name: service.name,
+      count: service.count,
+      lastBooked: service.lastBooked,
+      appointments: service.appointments.map((appointment: any) => {
+        const appointmentDate = new Date(appointment.date);
+        const [hours, minutes] = appointment.startTime.split(":").map(Number);
+        appointmentDate.setHours(hours, minutes, 0, 0);
+        const timeStatus = appointmentDate < currentDateTime ? "Past" : "Upcoming";
+        return {
+          appointmentId: appointment.appointmentId,
+          date: appointment.date,
+          startTime: appointment.startTime,
+          businessId: appointment.businessId,
+          status: appointment.status,
+          timeStatus,
+          createdAt: appointment.createdAt,
+          teamMemberId: appointment.teamMemberId,
+        };
+      }),
+    }));
+
+    const paginationMetadata = preparePaginationMetadata(totalServices, pagination);
+
     return successResponse(res, "Client fetched successfully", {
       client,
       appointmentHistory,
+      services: {
+        data: formattedServices,
+        pagination: paginationMetadata,
+      },
     });
   } catch (error: any) {
     console.error("Error fetching client:", error);
