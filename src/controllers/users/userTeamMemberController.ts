@@ -23,12 +23,24 @@ import {
 } from "../../utils/user/usercontrollerUtils";
 import { Readable } from "stream";
 import Busboy from "busboy";
-import {  createS3Client, uploadStreamToS3ofTeamMember, getS3FullUrl, AWS_BUCKET_NAME } from "../../config/s3";
+import {
+  createS3Client,
+  uploadStreamToS3ofTeamMember,
+  getS3FullUrl,
+  AWS_BUCKET_NAME,
+} from "../../config/s3";
 import { DeleteObjectCommand } from "@aws-sdk/client-s3";
-
+import { sendTeamMemberReassignEmailClient } from "utils/mails/mail";
+import RegisteredClient from "models/registeredClient/registeredClientSchema";
+import Client from "models/client/clientSchema";
+import Appointment from "models/appointment/appointmentSchema";
+import UserBusinessProfile from "models/business/userBusinessProfileSchema";
 
 // Helper function to handle file upload to S3
-const uploadProfilePictureToS3 = async (req: Request, userEmail: string): Promise<string | null> => {
+const uploadProfilePictureToS3 = async (
+  req: Request,
+  userEmail: string
+): Promise<string | null> => {
   return new Promise((resolve, reject) => {
     if (!req.headers["content-type"]?.includes("multipart/form-data")) {
       resolve(null);
@@ -42,7 +54,7 @@ const uploadProfilePictureToS3 = async (req: Request, userEmail: string): Promis
       "file",
       async (fieldname: string, fileStream: any, fileInfo: any) => {
         if (fieldname !== "profilePicture") {
-          fileStream.resume(); 
+          fileStream.resume();
           return;
         }
 
@@ -56,7 +68,7 @@ const uploadProfilePictureToS3 = async (req: Request, userEmail: string): Promis
         });
 
         fileStream.on("end", () => {
-          readableStream.push(null); 
+          readableStream.push(null);
         });
 
         uploadPromise = uploadStreamToS3ofTeamMember(
@@ -103,9 +115,12 @@ export const createTeamMember = async (req: Request, res: Response) => {
     let profilePictureUrl = "";
     if (req.headers["content-type"]?.includes("multipart/form-data")) {
       try {
-        const business = await findUserBusiness(userId, session) as { email?: string } | null;
-        const businessEmail = (business as { email?: string })?.email || userId.toString();
-        
+        const business = (await findUserBusiness(userId, session)) as {
+          email?: string;
+        } | null;
+        const businessEmail =
+          (business as { email?: string })?.email || userId.toString();
+
         const uploadResult = await uploadProfilePictureToS3(req, businessEmail);
         if (uploadResult) {
           profilePictureUrl = uploadResult;
@@ -115,7 +130,15 @@ export const createTeamMember = async (req: Request, res: Response) => {
       }
     }
 
-    const { name, email, phoneNumber, countryCode, gender, birthday, countryCallingCode } = req.body;
+    const {
+      name,
+      email,
+      phoneNumber,
+      countryCode,
+      gender,
+      birthday,
+      countryCallingCode,
+    } = req.body;
 
     if (!name || !email || !countryCallingCode) {
       await session.abortTransaction();
@@ -162,7 +185,9 @@ export const createTeamMember = async (req: Request, res: Response) => {
           birthday,
           businessId: businessId,
           userId: userId,
-          profilePicture: profilePictureUrl || "https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/DummyTeamMemberPic.png" ,
+          profilePicture:
+            profilePictureUrl ||
+            "https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/DummyTeamMemberPic.png",
         },
       ],
       { session }
@@ -204,9 +229,9 @@ export const getAllTeamMembers = async (req: Request, res: Response) => {
       const teamMembership = await RegisteredTeamMember.findOne({
         userId: userId,
         isDeleted: false,
-        isActive: true
+        isActive: true,
       });
-      
+
       if (!teamMembership) {
         return errorResponseHandler(
           "You don't have access to any business",
@@ -214,13 +239,13 @@ export const getAllTeamMembers = async (req: Request, res: Response) => {
           res
         );
       }
-      
+
       businessId = teamMembership.businessId as mongoose.Types.ObjectId;
     } else {
       // For business owners, use the existing logic
       const business = await findUserBusiness(userId);
       businessId = business ? (business._id as mongoose.Types.ObjectId) : null;
-      
+
       if (!businessId) {
         return errorResponseHandler(
           "You need to create a business profile first",
@@ -297,9 +322,9 @@ export const getTeamMemberById = async (req: Request, res: Response) => {
       const teamMembership = await RegisteredTeamMember.findOne({
         userId: userId,
         isDeleted: false,
-        isActive: true
+        isActive: true,
       });
-      
+
       if (!teamMembership) {
         return errorResponseHandler(
           "You don't have access to any business",
@@ -307,7 +332,7 @@ export const getTeamMemberById = async (req: Request, res: Response) => {
           res
         );
       }
-      
+
       businessId = teamMembership.businessId;
     } else {
       // For business owners, use the existing logic
@@ -323,9 +348,9 @@ export const getTeamMemberById = async (req: Request, res: Response) => {
     const query = {
       _id: memberId,
       businessId: businessId,
-      isDeleted: false
+      isDeleted: false,
     };
-    
+
     const teamMember = await TeamMember.findOne(query);
 
     if (!teamMember) {
@@ -383,11 +408,12 @@ export const updateTeamMember = async (req: Request, res: Response) => {
 
     let profilePictureUrl = existingTeamMember.profilePicture;
     let isDummyImage = profilePictureUrl.includes("DummyTeamMemberPic.png");
-    
+
     if (req.headers["content-type"]?.includes("multipart/form-data")) {
       try {
-        const businessEmail = (business as { email?: string })?.email || userId.toString();
-        
+        const businessEmail =
+          (business as { email?: string })?.email || userId.toString();
+
         // Upload new profile picture
         const uploadResult = await uploadProfilePictureToS3(req, businessEmail);
         if (uploadResult) {
@@ -396,23 +422,26 @@ export const updateTeamMember = async (req: Request, res: Response) => {
             try {
               const s3Client = createS3Client();
               // Extract the key from the full URL
-              const oldKey = profilePictureUrl.split('amazonaws.com/')[1];
-              
+              const oldKey = profilePictureUrl.split("amazonaws.com/")[1];
+
               if (oldKey) {
                 const deleteParams = {
                   Bucket: AWS_BUCKET_NAME,
-                  Key: oldKey
+                  Key: oldKey,
                 };
-                
+
                 await s3Client.send(new DeleteObjectCommand(deleteParams));
-                console.log("Successfully deleted old profile picture:", oldKey);
+                console.log(
+                  "Successfully deleted old profile picture:",
+                  oldKey
+                );
               }
             } catch (deleteError) {
               console.error("Error deleting old profile picture:", deleteError);
               // Continue with the update even if deletion fails
             }
           }
-          
+
           profilePictureUrl = uploadResult;
           console.log("New profile picture URL:", profilePictureUrl);
         }
@@ -471,12 +500,12 @@ export const updateTeamMember = async (req: Request, res: Response) => {
       updateData.countryCallingCode = countryCallingCode;
     if (gender !== undefined) updateData.gender = gender;
     if (birthday !== undefined) updateData.birthday = birthday;
-    
+
     // Always update profile picture if we have a new one
     if (profilePictureUrl !== existingTeamMember.profilePicture) {
       updateData.profilePicture = profilePictureUrl;
     }
-    
+
     if (role !== undefined) updateData.role = role;
     if (specialization !== undefined)
       updateData.specialization = specialization;
@@ -516,6 +545,8 @@ export const updateTeamMember = async (req: Request, res: Response) => {
     return handleTransactionError(session, error, res);
   }
 };
+// Helper function to add delay
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export const deleteTeamMembers = async (req: Request, res: Response) => {
   const session = await startSession();
@@ -536,10 +567,34 @@ export const deleteTeamMembers = async (req: Request, res: Response) => {
       );
     }
 
-    const business = await findUserBusiness(userId, session);
+    const business = await findUserBusiness(userId, session) as InstanceType<typeof UserBusinessProfile> | null;
     const businessId = business ? business._id : null;
 
-    // First validate all IDs before making any changes
+    if (!businessId) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Business not found",
+        httpStatusCode.NOT_FOUND,
+        res
+      );
+    }
+
+    // First validate all IDs and collect appointment data
+    const teamMembers: { id: string; name: string }[] = [];
+    const notificationData: Array<{
+      email: string;
+      clientName: string;
+      date: string;
+      startTime: string;
+      services: string[];
+      teamMemberName: string;
+    }> = [];
+    let affectedAppointmentsCount = 0;
+
+    // Email validation regex
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
     for (const memberId of teamIds) {
       // Validate object ID
       if (!mongoose.Types.ObjectId.isValid(memberId)) {
@@ -570,42 +625,93 @@ export const deleteTeamMembers = async (req: Request, res: Response) => {
           res
         );
       }
-    }
 
-    // If we get here, all IDs are valid, so proceed with deletion
-    const teamMembers = [];
-    
-    for (const memberId of teamIds) {
-      // Find the team member to get its name for the response
-      const query = buildTeamMemberQuery(
-        memberId,
-        userId,
-        businessId as mongoose.Types.ObjectId | null
-      );
-      
-      const teamMember = await TeamMember.findOne(query).session(session);
-      
-      // Mark the team member as deleted
+      // Find all non-cancelled appointments for this team member
+      const appointments = await Appointment.find({
+        teamMemberId: memberId,
+        businessId: businessId,
+        isDeleted: false,
+        status: { $in: ["PENDING", "CONFIRMED"] }
+      }).populate('clientId').session(session);
+
+      teamMembers.push({
+        id: memberId,
+        name: existingTeamMember.name || 'Unknown'
+      });
+
+      // Collect notification data for each appointment
+      for (const appointment of appointments) {
+        let client: any = null;
+        
+        // Check if client is from RegisteredClient or Client model
+        if (appointment.clientModel === "RegisteredClient") {
+          client = await RegisteredClient.findById(appointment.clientId).session(session);
+        } else {
+          client = await Client.findById(appointment.clientId).session(session);
+        }
+
+        if (client && client.email && emailRegex.test(client.email)) {
+          notificationData.push({
+            email: client.email,
+            clientName: client.name || client.fullName || "Customer",
+            date: appointment.date.toISOString().split("T")[0],
+            startTime: appointment.startTime,
+            services: appointment.services.map((s: any) => s.name || 'Unknown Service'),
+            teamMemberName: existingTeamMember.name || "Team Member"
+          });
+        }
+      }
+
+      affectedAppointmentsCount += appointments.length;
+
+      // Mark team member as deleted and update appointments
       await TeamMember.findByIdAndUpdate(
         memberId,
         { $set: { isDeleted: true } },
         { session }
       );
-      
-      teamMembers.push({
-        id: memberId,
-        name: teamMember?.name || 'Unknown'
-      });
+
+
     }
 
     await session.commitTransaction();
     session.endSession();
 
-    return successResponse(res, "Team members deleted successfully", {
-      deletedTeamMembers: teamMembers
+    // Send response immediately
+    const response = successResponse(res, "Team members deleted successfully", {
+      deletedTeamMembers: teamMembers,
+      affectedAppointments: affectedAppointmentsCount,
+      notifiedClients: notificationData.length
     });
+
+    // Send notifications asynchronously with a 1-second delay between each
+    setImmediate(async () => {
+      try {
+        const results = [];
+        for (const data of notificationData) {
+          const result = await sendTeamMemberReassignEmailClient(
+            [data.email],
+            data.clientName,
+            business?.businessName || "Business",
+            data.date,
+            data.startTime,
+            data.services,
+            data.teamMemberName
+          ).catch(error => {
+            return { email: data.email, status: 'failed', error };
+          });
+          results.push(result);
+          await delay(1000); // 1-second delay between emails
+        }
+      } catch (error) {
+        // Silent error handling to prevent crashing
+      }
+    });
+
+    return response;
   } catch (error: any) {
+    await session.abortTransaction();
+    session.endSession();
     return handleTransactionError(session, error, res);
   }
 };
-

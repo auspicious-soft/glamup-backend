@@ -9,6 +9,7 @@ import AppointmentCompletedEmailClient from "./templates/client-side/appointment
 import AppointmentCanceledEmailClient from "./templates/client-side/appointment-cancelled";
 import AppointmentBookedEmailBusiness from "./templates/business-side/appointment-booked";
 import AppointmentCanceledEmailBusiness from "./templates/business-side/appointment-cacelled";
+import TeamMemberReassignEmailClient from "./templates/client-side/team-member-reassign";
 configDotenv()
 
 const resend = new Resend(process.env.RESEND_API_KEY)
@@ -175,4 +176,29 @@ export const sendAppointmentCanceledEmailBusiness = async (
     subject: "Appointment Cancelled",
     react: AppointmentCanceledEmailBusiness({ clientName, businessName, date, startTime, cancellationReason, clientPhoneNumber }),
   });
+};
+
+
+export const sendTeamMemberReassignEmailClient = async (
+  emails: string[],
+  clientName: string,
+  businessName: string,
+  date: string,
+  startTime: string,
+  services: string[],
+  teamMemberName: string
+) => {
+  const emailPromises = emails.map(email => 
+    resend.emails.send({
+      from: process.env.COMPANY_RESEND_GMAIL_ACCOUNT as string,
+      to: email,
+      subject: "Appointment Team Member Change Notification",
+      react: TeamMemberReassignEmailClient({ clientName, businessName, date, startTime, services, teamMemberName }),
+    }).then(response => {
+      return { email, status: 'success', response };
+    }).catch(error => {
+      return { email, status: 'failed', error };
+    })
+  );
+  return await Promise.all(emailPromises);
 };
