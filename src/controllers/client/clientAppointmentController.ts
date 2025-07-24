@@ -878,9 +878,11 @@ export const getClientUpcomingAppointments = async (
       );
     }
 
+    // Get current time in UTC to match database timezone
     const now = new Date();
-    const todayStr = now.toISOString().split("T")[0]; // 'YYYY-MM-DD'
-    const currentTimeStr = now.toTimeString().slice(0, 5); // 'HH:MM'
+    const nowUTC = new Date(now.toISOString()); // Ensure UTC
+    const todayStr = nowUTC.toISOString().split("T")[0]; // 'YYYY-MM-DD' in UTC
+    const currentTimeStr = nowUTC.toTimeString().slice(0, 5); // 'HH:MM' in UTC
 
     // Build query for upcoming appointments
     const query: any = {
@@ -890,11 +892,11 @@ export const getClientUpcomingAppointments = async (
       $or: [
         // Appointments after today
         {
-          date: { $gt: new Date(todayStr) },
+          date: { $gt: nowUTC },
         },
         // Appointments today with startTime >= current time
         {
-          date: new Date(todayStr),
+          date: { $gte: new Date(todayStr), $lte: new Date(todayStr + 'T23:59:59.999Z') },
           startTime: { $gte: currentTimeStr },
         },
       ],
