@@ -53,7 +53,6 @@ export const createClientAppointment = async (req: Request, res: Response) => {
 
   try {
     session.startTransaction();
-
     const {
       clientId,
       businessId,
@@ -61,11 +60,13 @@ export const createClientAppointment = async (req: Request, res: Response) => {
       serviceIds,
       packageId,
       date,
-      startTime,
+      // startTime,
       endTime,
       notes,
     } = req.body;
 
+    const startTime = new Date(date).toISOString().slice(11, 16);
+    console.log(startTime)
     // Validate required fields
     if (!clientId || !businessId || !teamMemberId || !date || !startTime) {
       await session.abortTransaction();
@@ -478,7 +479,7 @@ export const getClientAppointments = async (req: Request, res: Response) => {
         limit: limitNum,
         pages: Math.ceil(totalAppointments / limitNum),
       },
-      appointments: appointmentsWithTimeStatus,
+      appointments: appointments,
     });
   } catch (error: any) {
     console.error("Error fetching client appointments:", error);
@@ -648,7 +649,10 @@ export const rescheduleClientAppointment = async (
     session.startTransaction();
 
     const { appointmentId } = req.params;
-    const { date, startTime, endTime, teamMemberId } = req.body;
+    const { date, endTime, teamMemberId } = req.body;
+
+    const startTime = new Date(date).toISOString().slice(11, 16);
+
 
     if (!mongoose.Types.ObjectId.isValid(appointmentId)) {
       await session.abortTransaction();

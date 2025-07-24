@@ -371,7 +371,6 @@ export const getRecommendedBusinesses = async (req: Request, res: Response) => {
   try {
     const { clientId } = req.params;
 
-  
     if (!clientId || typeof clientId !== "string") {
       return errorResponseHandler(
         "Client ID is required and must be a string",
@@ -408,10 +407,11 @@ export const getRecommendedBusinesses = async (req: Request, res: Response) => {
       });
     }
 
-    // Fetch business details for the top businesses
+    // Fetch business details for the top businesses, excluding deleted ones
     const businessIds = appointmentCounts.map(a => a._id);
     const businesses = await UserBusinessProfile.find({
-      _id: { $in: businessIds }
+      _id: { $in: businessIds },
+      isDeleted: { $ne: true } // Exclude businesses where isDeleted is true
     }).select(
       "businessName businessProfilePic PhoneNumber countryCode email businessDescription " +
       "websiteLink facebookLink instagramLink messengerLink country selectedCategories"
