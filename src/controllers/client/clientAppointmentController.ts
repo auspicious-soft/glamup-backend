@@ -19,12 +19,19 @@ import {
   sendAppointmentBookedEmailBusiness,
   sendAppointmentCanceledEmailBusiness,
 } from "utils/mails/mail";
+import Package from "models/package/packageSchema";
 
 // Create a nanoid generator for appointment IDs
 const appointmentId = customAlphabet(
   "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
   10
 );
+
+// Helper function to generate a unique appointment ID
+const generateAppointmentId = (): string => {
+  // You can use a timestamp and random string for uniqueness
+  return `APT-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+};
 
 // Create appointment as a client
 export const createClientAppointment = async (req: Request, res: Response) => {
@@ -38,25 +45,39 @@ export const createClientAppointment = async (req: Request, res: Response) => {
       businessId,
       teamMemberId,
       serviceIds,
+      packageId,
       date,
       startTime,
       endTime,
       notes,
     } = req.body;
 
-    // Validate required fields (categoryId removed)
-    if (
-      !clientId ||
-      !businessId ||
-      !teamMemberId ||
-      !serviceIds ||
-      !date ||
-      !startTime
-    ) {
+    // Validate required fields
+    if (!clientId || !businessId || !teamMemberId || !date || !startTime) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
         "Missing required fields for appointment creation",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    // Validate that either serviceIds or packageId is provided, but not both
+    if (serviceIds && packageId) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Cannot provide both serviceIds and packageId",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+    if (!serviceIds && !packageId) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Either serviceIds or packageId is required",
         httpStatusCode.BAD_REQUEST,
         res
       );
@@ -80,7 +101,7 @@ export const createClientAppointment = async (req: Request, res: Response) => {
       _id: businessId,
       status: "active",
       isDeleted: false,
-    });
+    }).session(session);
 
     if (!business) {
       await session.abortTransaction();
@@ -93,7 +114,7 @@ export const createClientAppointment = async (req: Request, res: Response) => {
     }
 
     // Check if client exists
-    const client = await RegisteredClient.findById(clientId);
+    const client = await RegisteredClient.findById(clientId).session(session);
     if (!client) {
       await session.abortTransaction();
       session.endSession();
@@ -110,7 +131,7 @@ export const createClientAppointment = async (req: Request, res: Response) => {
       businessId: businessId,
       isActive: true,
       isDeleted: false,
-    });
+    }).session(session);
 
     if (!teamMember) {
       await session.abortTransaction();
@@ -122,22 +143,81 @@ export const createClientAppointment = async (req: Request, res: Response) => {
       );
     }
 
-    // Check if services exist and belong to the business (category check removed)
-    const services = await Service.find({
-      _id: { $in: serviceIds },
-      businessId: businessId,
-      isActive: true,
-      isDeleted: false,
-    });
+    let services: any[] = [];
+    let totalDuration = 0;
+    let totalPrice = 0;
+    let finalEndTime = endTime;
+    let appointmentPackage = null;
 
-    if (services.length !== serviceIds.length) {
-      await session.abortTransaction();
-      session.endSession();
-      return errorResponseHandler(
-        "One or more services not found or inactive",
-        httpStatusCode.NOT_FOUND,
-        res
+    if (packageId) {
+      // Handle package-based appointment
+      const packageData = await Package.findOne({
+        _id: packageId,
+        businessId: businessId,
+        isActive: true,
+        isDeleted: false,
+      }).session(session);
+
+      if (!packageData) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          "Package not found or inactive",
+          httpStatusCode.NOT_FOUND,
+          res
+        );
+      }
+
+      services = await Service.find({
+        _id: { $in: packageData.services.map((s: any) => s._id) },
+        businessId: businessId,
+        isActive: true,
+        isDeleted: false,
+      }).session(session);
+
+      totalDuration = packageData.duration || 0;
+      totalPrice = packageData.price || 0;
+      finalEndTime = endTime || calculateEndTime(startTime, totalDuration);
+      appointmentPackage = {
+        packageId: packageData._id,
+        name: packageData.name,
+        duration: packageData.duration,
+        price: packageData.price,
+        services: packageData.services.map((svc: any) => ({
+          serviceId: svc._id,
+          name: svc.name,
+          duration: svc.duration,
+          price: svc.price,
+        })),
+      };
+    } else {
+      // Handle service-based appointment
+      services = await Service.find({
+        _id: { $in: serviceIds },
+        businessId: businessId,
+        isActive: true,
+        isDeleted: false,
+      }).session(session);
+
+      if (services.length !== serviceIds.length) {
+        await session.abortTransaction();
+        session.endSession();
+        return errorResponseHandler(
+          "One or more services not found or inactive",
+          httpStatusCode.NOT_FOUND,
+          res
+        );
+      }
+
+      totalDuration = services.reduce(
+        (sum, service) => sum + service.duration,
+        0
       );
+      totalPrice = services.reduce(
+        (sum, service) => sum + service.price,
+        0
+      );
+      finalEndTime = endTime || calculateEndTime(startTime, totalDuration);
     }
 
     // Check if time slot is available
@@ -146,7 +226,7 @@ export const createClientAppointment = async (req: Request, res: Response) => {
       appointmentDate,
       appointmentDate,
       startTime,
-      endTime || calculateEndTime(startTime, services)
+      finalEndTime
     );
 
     if (!isAvailable) {
@@ -159,56 +239,10 @@ export const createClientAppointment = async (req: Request, res: Response) => {
       );
     }
 
-    // Calculate total duration and price
-    const totalDuration = services.reduce(
-      (sum, service) => sum + service.duration,
-      0
-    );
-    const totalPrice = services.reduce(
-      (sum, service) => sum + service.price,
-      0
-    );
-    const finalEndTime = endTime || calculateEndTime(startTime, services);
-
     // Generate a unique appointment ID to link both records
     const uniqueAppointmentId = generateAppointmentId();
 
-    // --- FIX: Find or create Client in business's Client collection ---
-    // let businessClient = await (mongoose as any).models.Client.findOne({
-    //   phoneNumber: client.phoneNumber,
-    //   businessId: business._id,
-    //   isDeleted: false,
-    // }).session(session);
-
-    // if (!businessClient) {
-    //   businessClient = await (mongoose as any).models.Client.create([{
-    //     name: client.fullName,
-    //     email: client.email,
-    //     phoneNumber: client.phoneNumber,
-    //     countryCode: client.countryCode || "+91",
-    //     countryCallingCode: client.countryCallingCode || "IN",
-    //     profilePicture: client.profilePic || "",
-    //     // birthday: client.birthday || null, // Removed because 'birthday' does not exist on RegisteredClient
-    //     // gender: client.gender || "prefer_not_to_say",
-    //     // address: client.address || {
-    //     //   street: "",
-    //     //   city: "",
-    //     //   region: "",
-    //     //   country: "",
-    //     // },
-    //     notes: "",
-    //     tags: [],
-    //     businessId: business._id,
-    //     preferredServices: [],
-    //     preferredTeamMembers: [],
-    //     lastVisit: null,
-    //     isActive: true,
-    //     isDeleted: false,
-    //   }], { session });
-    //   businessClient = businessClient[0];
-    // }
-
-    // Create client appointment (categoryId/categoryName removed)
+    // Create client appointment
     const clientAppointmentData = {
       appointmentId: uniqueAppointmentId,
       clientId: client._id,
@@ -226,37 +260,32 @@ export const createClientAppointment = async (req: Request, res: Response) => {
             .join(", ")
         : "",
       businessPhone: business.PhoneNumber || "",
-
       services: services.map((service) => ({
         serviceId: service._id,
         name: service.name,
         duration: service.duration,
         price: service.price,
       })),
-
+      package: appointmentPackage,
       teamMemberId: teamMember._id,
       teamMemberName: teamMember.name,
       teamMemberProfilePic: teamMember.profilePicture || "",
-
       date: appointmentDate,
       endDate: appointmentDate,
       startTime,
       endTime: finalEndTime,
       duration: totalDuration,
-
       totalPrice,
       discount: 0,
       finalPrice: totalPrice,
-
       status: "PENDING",
       notes: notes || "",
-
       location: {
         type: "business",
       },
     };
 
-    // Create business appointment (categoryId/categoryName removed)
+    // Create business appointment
     const businessAppointmentData = {
       appointmentId: uniqueAppointmentId,
       clientId: client._id,
@@ -264,30 +293,25 @@ export const createClientAppointment = async (req: Request, res: Response) => {
       clientName: client.fullName,
       clientEmail: client.email,
       clientPhone: client.phoneNumber || "",
-
       teamMemberId: teamMember._id,
       teamMemberName: teamMember.name,
-
       businessId: business._id,
-
       date: appointmentDate,
       endDate: appointmentDate,
       startTime,
       endTime: finalEndTime,
       duration: totalDuration,
-
       services: services.map((service) => ({
         serviceId: service._id,
         name: service.name,
         duration: service.duration,
         price: service.price,
       })),
-
+      package: appointmentPackage,
       totalPrice,
       discount: 0,
       finalPrice: totalPrice,
       currency: "INR",
-
       paymentStatus: "PENDING",
       status: "PENDING",
       notes: notes || "",
@@ -308,12 +332,13 @@ export const createClientAppointment = async (req: Request, res: Response) => {
 
     await session.commitTransaction();
     session.endSession();
+
     try {
       await sendAppointmentBookedEmailBusiness(
-        business.email, // business email from UserBusinessProfile
+        business.email,
         client.fullName,
         business.businessName,
-        appointmentDate.toISOString().split("T")[0], // date as YYYY-MM-DD
+        appointmentDate.toISOString().split("T")[0],
         startTime,
         services.map((service) => service.name)
       );
@@ -322,8 +347,8 @@ export const createClientAppointment = async (req: Request, res: Response) => {
         "Failed to send appointment booked email to business:",
         mailErr
       );
-      // Do not fail the API if email fails
     }
+
     return successResponse(
       res,
       "Appointment created successfully",
@@ -333,32 +358,21 @@ export const createClientAppointment = async (req: Request, res: Response) => {
   } catch (error: any) {
     await session.abortTransaction();
     session.endSession();
-
     console.error("Error creating client appointment:", error);
     const parsedError = errorParser(error);
     return errorResponseHandler(parsedError.message, parsedError.code, res);
   }
 };
 
-// Helper function to generate a unique appointment ID
-const generateAppointmentId = (): string => {
-  // You can use a timestamp and random string for uniqueness
-  return `APT-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
-};
+
+
 
 // Helper function to calculate end time based on services duration
-const calculateEndTime = (startTime: string, services: any[]): string => {
-  const totalDuration = services.reduce(
-    (sum, service) => sum + service.duration,
-    0
-  );
-
+const calculateEndTime = (startTime: string, duration: number): string => {
   const [hours, minutes] = startTime.split(":").map(Number);
-  let totalMinutes = hours * 60 + minutes + totalDuration;
-
+  let totalMinutes = hours * 60 + minutes + duration;
   const endHours = Math.floor(totalMinutes / 60) % 24;
   const endMinutes = totalMinutes % 60;
-
   return `${endHours.toString().padStart(2, "0")}:${endMinutes.toString().padStart(2, "0")}`;
 };
 
@@ -917,6 +931,7 @@ export const getClientUpcomingAppointments = async (
   }
 };
 
+// Update client appointment
 export const updateClientAppointment = async (req: Request, res: Response) => {
   const session = await mongoose.startSession();
 
@@ -929,6 +944,7 @@ export const updateClientAppointment = async (req: Request, res: Response) => {
       businessId,
       teamMemberId,
       serviceIds,
+      packageId,
       date,
       startTime,
       endTime,
@@ -974,11 +990,22 @@ export const updateClientAppointment = async (req: Request, res: Response) => {
     }
 
     // Validate required fields
-    if (!businessId || !teamMemberId || !serviceIds || !date || !startTime) {
+    if (!businessId || !teamMemberId || !date || !startTime) {
       await session.abortTransaction();
       session.endSession();
       return errorResponseHandler(
         "Missing required fields for appointment update",
+        httpStatusCode.BAD_REQUEST,
+        res
+      );
+    }
+
+    // Validate that either serviceIds or packageId is provided, but not both
+    if (serviceIds && packageId) {
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Cannot provide both serviceIds and packageId",
         httpStatusCode.BAD_REQUEST,
         res
       );
@@ -1031,24 +1058,6 @@ export const updateClientAppointment = async (req: Request, res: Response) => {
       );
     }
 
-    // Validate services
-    const services = await Service.find({
-      _id: { $in: serviceIds },
-      businessId: businessId,
-      isActive: true,
-      isDeleted: false,
-    }).session(session);
-
-    if (services.length !== serviceIds.length) {
-      await session.abortTransaction();
-      session.endSession();
-      return errorResponseHandler(
-        "One or more services not found or inactive",
-        httpStatusCode.NOT_FOUND,
-        res
-      );
-    }
-
     // Validate date (cannot update to a past date)
     const appointmentDate = new Date(date);
     const today = new Date();
@@ -1064,40 +1073,98 @@ export const updateClientAppointment = async (req: Request, res: Response) => {
       );
     }
 
-    const newTeamMemberId =
-      teamMemberId || clientAppointment.teamMemberId.toString();
-    const newDate = date ? new Date(date) : clientAppointment.date;
-    const newStartTime = startTime || clientAppointment.startTime;
-    const newEndTime = endTime || clientAppointment.endTime;
+    let updatedServices: any[] = [];
+    let totalDuration = clientAppointment.duration;
+    let totalPrice = clientAppointment.totalPrice;
+    let finalEndTime = endTime || clientAppointment.endTime;
+    let appointmentPackage = clientAppointment.package;
 
-    // Calculate total duration and price for new services (or existing)
-    const updatedServices = serviceIds
-      ? await Service.find({
+    if (serviceIds || packageId) {
+      if (packageId) {
+        // Handle package-based appointment
+        const packageData = await Package.findOne({
+          _id: packageId,
+          businessId: businessId,
+          isActive: true,
+          isDeleted: false,
+        }).session(session);
+
+        if (!packageData) {
+          await session.abortTransaction();
+          session.endSession();
+          return errorResponseHandler(
+            "Package not found or inactive",
+            httpStatusCode.NOT_FOUND,
+            res
+          );
+        }
+
+        updatedServices = await Service.find({
+          _id: { $in: packageData.services.map((s: any) => s._id) },
+          businessId: businessId,
+          isActive: true,
+          isDeleted: false,
+        }).session(session);
+
+        totalDuration = packageData.duration || 0;
+        totalPrice = packageData.price || 0;
+        finalEndTime = endTime || calculateEndTime(startTime, totalDuration);
+        appointmentPackage = {
+          packageId: packageData._id as mongoose.Types.ObjectId ,
+          name: packageData.name,
+          duration: packageData.duration,
+          price: packageData.price,
+          services: packageData.services.map((svc: any) => ({
+            serviceId: svc._id,
+            name: svc.name,
+            duration: svc.duration,
+            price: svc.price,
+          })),
+        };
+      } else {
+        // Handle service-based appointment
+        updatedServices = await Service.find({
           _id: { $in: serviceIds },
           businessId: businessId,
           isActive: true,
           isDeleted: false,
-        }).session(session)
-      : clientAppointment.services;
+        }).session(session);
 
-    const totalDuration = updatedServices.reduce(
-      (sum, service) => sum + service.duration,
-      0
-    );
-    const finalEndTime =
-      endTime || calculateEndTime(newStartTime, updatedServices);
-    const totalPrice = updatedServices.reduce(
-      (sum, service) => sum + service.price,
-      0
-    );
+        if (updatedServices.length !== serviceIds.length) {
+          await session.abortTransaction();
+          session.endSession();
+          return errorResponseHandler(
+            "One or more services not found or inactive",
+            httpStatusCode.NOT_FOUND,
+            res
+          );
+        }
 
-    // Only check time slot if team member, date, or startTime is changed
+        totalDuration = updatedServices.reduce(
+          (sum, service) => sum + service.duration,
+          0
+        );
+        totalPrice = updatedServices.reduce(
+          (sum, service) => sum + service.price,
+          0
+        );
+        finalEndTime = endTime || calculateEndTime(startTime, totalDuration);
+        appointmentPackage = null; // Clear package if switching to services
+      }
+    } else {
+      // Use existing services and package
+      updatedServices = clientAppointment.services;
+      appointmentPackage = clientAppointment.package;
+    }
+
+    const newTeamMemberId = teamMemberId || clientAppointment.teamMemberId.toString();
+    const newDate = date ? new Date(date) : clientAppointment.date;
+    const newStartTime = startTime || clientAppointment.startTime;
+
+    // Only check time slot if team member, date, startTime, or endTime is changed
     const shouldCheckTimeSlot =
-      (teamMemberId &&
-        teamMemberId !== clientAppointment.teamMemberId.toString()) ||
-      (date &&
-        new Date(date).toISOString() !==
-          clientAppointment.date.toISOString()) ||
+      (teamMemberId && teamMemberId !== clientAppointment.teamMemberId.toString()) ||
+      (date && new Date(date).toISOString() !== clientAppointment.date.toISOString()) ||
       (startTime && startTime !== clientAppointment.startTime) ||
       (endTime && endTime !== clientAppointment.endTime);
 
@@ -1108,7 +1175,7 @@ export const updateClientAppointment = async (req: Request, res: Response) => {
         newDate,
         newStartTime,
         finalEndTime,
-        appointmentId // Exclude current appointment from conflict check
+        appointmentId
       );
 
       if (!isAvailable) {
@@ -1124,9 +1191,7 @@ export const updateClientAppointment = async (req: Request, res: Response) => {
 
     // Update the client appointment
     clientAppointment.teamMemberId = newTeamMemberId;
-    clientAppointment.teamMemberName = teamMember
-      ? teamMember.name
-      : clientAppointment.teamMemberName;
+    clientAppointment.teamMemberName = teamMember ? teamMember.name : clientAppointment.teamMemberName;
     clientAppointment.teamMemberProfilePic = teamMember
       ? teamMember.profilePicture || ""
       : clientAppointment.teamMemberProfilePic;
@@ -1136,6 +1201,7 @@ export const updateClientAppointment = async (req: Request, res: Response) => {
       duration: service.duration,
       price: service.price,
     }));
+    clientAppointment.package = appointmentPackage;
     clientAppointment.date = newDate;
     clientAppointment.endDate = newDate;
     clientAppointment.startTime = newStartTime;
@@ -1143,11 +1209,11 @@ export const updateClientAppointment = async (req: Request, res: Response) => {
     clientAppointment.duration = totalDuration;
     clientAppointment.totalPrice = totalPrice;
     clientAppointment.finalPrice = totalPrice;
-    clientAppointment.status = "PENDING"; // Reset to pending on update
-    clientAppointment.notes = notes ? notes : "";
+    clientAppointment.status = "PENDING";
+    clientAppointment.notes = notes !== undefined ? notes : clientAppointment.notes;
     await clientAppointment.save({ session });
 
-    // Update the corresponding business appointment as well
+    // Update the corresponding business appointment
     const businessAppointment = await Appointment.findOne({
       appointmentId: clientAppointment.appointmentId,
       isDeleted: false,
@@ -1159,6 +1225,7 @@ export const updateClientAppointment = async (req: Request, res: Response) => {
         ? teamMember.name
         : businessAppointment.teamMemberName;
       businessAppointment.services = clientAppointment.services;
+      businessAppointment.package = appointmentPackage;
       businessAppointment.date = newDate;
       businessAppointment.endDate = newDate;
       businessAppointment.startTime = newStartTime;
@@ -1167,7 +1234,7 @@ export const updateClientAppointment = async (req: Request, res: Response) => {
       businessAppointment.totalPrice = totalPrice;
       businessAppointment.finalPrice = totalPrice;
       businessAppointment.status = "PENDING";
-      businessAppointment.notes = notes ? notes : "";
+      businessAppointment.notes = notes !== undefined ? notes : businessAppointment.notes;
       await businessAppointment.save({ session });
     }
 
