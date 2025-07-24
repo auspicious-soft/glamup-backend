@@ -877,11 +877,12 @@ export const getClientUpcomingAppointments = async (
         // Appointments after today
         {
           date: { $gt: new Date(todayStr) },
+          // startTime: { $gte: currentTimeStr },
         },
         // Appointments today with startTime >= current time
         {
           date: new Date(todayStr),
-          startTime: { $gte: currentTimeStr },
+          startTime: { $gt: currentTimeStr },
         },
       ],
     };
