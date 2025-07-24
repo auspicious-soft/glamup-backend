@@ -313,7 +313,8 @@ export const getBusinessCategoryServices = async (req: Request, res: Response) =
 export const getBusinessesWithAppointments = async (req: Request, res: Response) => {
   try {
     // Fetch all businesses
-    const businesses = await UserBusinessProfile.find();
+    
+    const businesses = await UserBusinessProfile.find({ isDeleted: false });
 
     // Get appointment counts for each business
     const appointmentCounts = await Appointment.aggregate([
