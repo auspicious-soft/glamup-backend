@@ -33,6 +33,20 @@ const generateAppointmentId = (): string => {
   return `APT-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
 };
 
+// Helper function to get current date and time in IST (UTC+5:30)
+const getISTDateTime = () => {
+  const now = new Date();
+  // Adjust to IST (UTC+5:30)
+  const istOffset = 5.5 * 60 * 60 * 1000; // 5 hours 30 minutes in milliseconds
+  const istNow = new Date(now.getTime() + istOffset);
+  return {
+    date: istNow,
+    dateStr: istNow.toISOString().split("T")[0], // YYYY-MM-DD in IST
+    timeStr: istNow.toTimeString().slice(0, 5), // HH:MM in IST
+  };
+};
+
+
 // Create appointment as a client
 export const createClientAppointment = async (req: Request, res: Response) => {
   const session = await mongoose.startSession();
@@ -877,12 +891,11 @@ export const getClientUpcomingAppointments = async (
         // Appointments after today
         {
           date: { $gt: new Date(todayStr) },
-          // startTime: { $gte: currentTimeStr },
         },
         // Appointments today with startTime >= current time
         {
           date: new Date(todayStr),
-          startTime: { $gt: currentTimeStr },
+          startTime: { $gte: currentTimeStr },
         },
       ],
     };
@@ -893,10 +906,9 @@ export const getClientUpcomingAppointments = async (
     const skip = (pageNum - 1) * limitNum;
 
     // Sorting
-    let sortOption: any = { date: 1, startTime: 1 };
-    if (sort === "-date") {
-      sortOption = { date: -1, startTime: -1 };
-    }
+    const sortOption: { [key: string]: 1 | -1 } = sort === "-date"
+      ? { date: -1, startTime: -1 }
+      : { date: 1, startTime: 1 };
 
     // Get total count of upcoming appointments
     const totalAppointments = await ClientAppointment.countDocuments(query);
