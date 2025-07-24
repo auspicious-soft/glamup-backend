@@ -536,6 +536,7 @@ export const deactivateUserAccount = async (req: Request, res: Response) => {
         businessProfile._id,
         { 
           status: "inactive",
+          isDeleted:true,
           deactivatedAt: new Date()
         },
         { session }
