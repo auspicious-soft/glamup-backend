@@ -874,14 +874,14 @@ export const getClientUpcomingAppointments = async (
       isDeleted: false,
       status: { $in: ["PENDING", "CONFIRMED"] },
       $or: [
-        // Appointments later today
-        {
-          date: new Date(todayStr),
-          startTime: { $gte: currentTimeStr },
-        },
         // Appointments after today
         {
           date: { $gt: new Date(todayStr) },
+        },
+        // Appointments today with startTime >= current time
+        {
+          date: new Date(todayStr),
+          startTime: { $gte: currentTimeStr },
         },
       ],
     };
