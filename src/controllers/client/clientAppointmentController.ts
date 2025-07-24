@@ -850,7 +850,6 @@ export const rescheduleClientAppointment = async (
   }
 };
 
-// Get upcoming appointments for a client
 export const getClientUpcomingAppointments = async (
   req: Request,
   res: Response 
@@ -882,7 +881,7 @@ export const getClientUpcomingAppointments = async (
     const now = new Date();
     const nowUTC = new Date(now.toISOString()); // Ensure UTC
     const todayStr = nowUTC.toISOString().split("T")[0]; // 'YYYY-MM-DD' in UTC
-    const currentTimeStr = nowUTC.toTimeString().slice(0, 5); // 'HH:MM' in UTC
+    const currentTimeStr = nowUTC.toTimeString().slice(0, 5); // 'HH:MM' in UTC, e.g., "06:34"
 
     // Build query for upcoming appointments
     const query: any = {
@@ -892,7 +891,7 @@ export const getClientUpcomingAppointments = async (
       $or: [
         // Appointments after today
         {
-          date: { $gt: nowUTC },
+          date: { $gt: new Date(todayStr + 'T23:59:59.999Z') },
         },
         // Appointments today with startTime >= current time
         {
