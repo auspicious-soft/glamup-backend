@@ -290,7 +290,7 @@ export const createClientAppointment = async (req: Request, res: Response) => {
 
       paymentStatus: "PENDING",
       status: "PENDING",
-
+      notes: notes || "",
       createdBy: business.ownerId,
       updatedBy: business.ownerId,
       createdVia: "client_booking",
@@ -1144,7 +1144,7 @@ export const updateClientAppointment = async (req: Request, res: Response) => {
     clientAppointment.totalPrice = totalPrice;
     clientAppointment.finalPrice = totalPrice;
     clientAppointment.status = "PENDING"; // Reset to pending on update
-
+    clientAppointment.notes = notes ? notes : "";
     await clientAppointment.save({ session });
 
     // Update the corresponding business appointment as well
@@ -1167,6 +1167,7 @@ export const updateClientAppointment = async (req: Request, res: Response) => {
       businessAppointment.totalPrice = totalPrice;
       businessAppointment.finalPrice = totalPrice;
       businessAppointment.status = "PENDING";
+      businessAppointment.notes = notes ? notes : "";
       await businessAppointment.save({ session });
     }
 

@@ -1,7 +1,10 @@
 import mongoose from "mongoose";
 import { customAlphabet } from "nanoid";
 
-const appointmentId = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 10);
+const appointmentId = customAlphabet(
+  "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+  10
+);
 
 // Define TypeScript interfaces
 export interface AppointmentService {
@@ -39,18 +42,18 @@ export interface IClientAppointment {
   businessLogo: string;
   businessAddress: string;
   businessPhone: string;
-  
+
   // Service details
   // categoryId: mongoose.Types.ObjectId;
   // categoryName: string;
   services: AppointmentService[];
   package: AppointmentPackage | null;
-  
+
   // Team member details
   teamMemberId: mongoose.Types.ObjectId;
   teamMemberName: string;
   teamMemberProfilePic: string;
-  
+
   // Time details
   date: Date;
   endDate: Date;
@@ -58,10 +61,10 @@ export interface IClientAppointment {
   endTime: string;
   duration: number;
   timezone: string;
-  
+
   // Location details
   location: AppointmentLocation;
-  
+
   // Payment details
   totalPrice: number;
   discount: number;
@@ -71,22 +74,22 @@ export interface IClientAppointment {
   paymentMethod: "cash" | "card" | "online" | "other";
   paymentDate: Date | null;
   paymentId: string | null;
-  
+
   // Appointment status
   status: "PENDING" | "CONFIRMED" | "CANCELLED" | "COMPLETED" | "NO_SHOW";
   cancellationReason: string;
   cancellationDate: Date | null;
   cancellationBy: "client" | "business" | null;
-  
+
   // Reminders and notifications
   reminderSent: boolean;
   reminderSentAt: Date | null;
-  
+
   // Feedback and ratings
   rating: number | null;
   review: string | null;
   reviewDate: Date | null;
-  
+
   // Tracking
   parentAppointmentId: mongoose.Types.ObjectId | null;
   isRescheduled: boolean;
@@ -95,9 +98,12 @@ export interface IClientAppointment {
   isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
+  notes?: string;
 }
 
-export interface IClientAppointmentDocument extends mongoose.Document, IClientAppointment {}
+export interface IClientAppointmentDocument
+  extends mongoose.Document,
+    IClientAppointment {}
 
 const clientAppointmentSchema = new mongoose.Schema(
   {
@@ -108,22 +114,22 @@ const clientAppointmentSchema = new mongoose.Schema(
     },
     clientId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'RegisteredClient',
+      ref: "RegisteredClient",
       required: true,
     },
     businessId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'UserBusinessProfile',
+      ref: "UserBusinessProfile",
       required: true,
     },
     businessName: {
       type: String,
       required: true,
     },
-  businessLogo: {
-  type: [String],
-  default: [],
-},
+    businessLogo: {
+      type: [String],
+      default: [],
+    },
     businessAddress: {
       type: String,
       default: "",
@@ -132,7 +138,7 @@ const clientAppointmentSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
-    
+
     // Service details
     // categoryId: {
     //   type: mongoose.Schema.Types.ObjectId,
@@ -141,51 +147,59 @@ const clientAppointmentSchema = new mongoose.Schema(
     // },
     // categoryName: {
     //   type: String,
-    //   required: true, 
+    //   required: true,
     // },
-    services: [{
-      serviceId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'Service',
-        required: true,
+    notes: {
+      type: String,
+      default: "",
+    },
+    services: [
+      {
+        serviceId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Service",
+          required: true,
+        },
+        name: {
+          type: String,
+          required: true,
+        },
+        duration: {
+          type: Number,
+          required: true,
+        },
+        price: {
+          type: Number,
+          required: true,
+        },
       },
-      name: {
-        type: String,
-        required: true,
-      },
-      duration: {
-        type: Number,
-        required: true,
-      },
-      price: {
-        type: Number,
-        required: true,
-      },
-    }],
+    ],
     package: {
       packageId: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'Package',
+        ref: "Package",
       },
       name: String,
       duration: Number,
       price: Number,
-      services: [{
-        serviceId: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: 'Service',
+      services: [
+        {
+          serviceId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Service",
+          },
+          name: String,
+          duration: Number,
+          price: Number,
         },
-        name: String,
-        duration: Number,
-        price: Number,
-      }],
+      ],
       _id: false,
     },
-    
+
     // Team member details
     teamMemberId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'TeamMember',
+      ref: "TeamMember",
       required: true,
     },
     teamMemberName: {
@@ -196,7 +210,7 @@ const clientAppointmentSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
-    
+
     // Time details
     date: {
       type: Date,
@@ -223,7 +237,7 @@ const clientAppointmentSchema = new mongoose.Schema(
       type: String,
       default: "UTC",
     },
-    
+
     // Location details
     location: {
       type: {
@@ -241,7 +255,7 @@ const clientAppointmentSchema = new mongoose.Schema(
       notes: String,
       _id: false,
     },
-    
+
     // Payment details
     totalPrice: {
       type: Number,
@@ -280,7 +294,7 @@ const clientAppointmentSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
-    
+
     // Appointment status
     status: {
       type: String,
@@ -300,7 +314,7 @@ const clientAppointmentSchema = new mongoose.Schema(
       enum: ["client", "business", null],
       default: null,
     },
-    
+
     // Reminders and notifications
     reminderSent: {
       type: Boolean,
@@ -310,7 +324,7 @@ const clientAppointmentSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
-    
+
     // Feedback and ratings
     rating: {
       type: Number,
@@ -326,11 +340,11 @@ const clientAppointmentSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
-    
+
     // Tracking
     parentAppointmentId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'ClientAppointment',
+      ref: "ClientAppointment",
       default: null,
     },
     isRescheduled: {
@@ -356,27 +370,31 @@ const clientAppointmentSchema = new mongoose.Schema(
 );
 
 // Virtual for time range
-clientAppointmentSchema.virtual('timeRange').get(function() {
+clientAppointmentSchema.virtual("timeRange").get(function () {
   return `${this.startTime} - ${this.endTime}`;
 });
 
 // Pre-save hook to calculate duration if not provided
-clientAppointmentSchema.pre('save', function(next) {
+clientAppointmentSchema.pre("save", function (next) {
   if (this.startTime && this.endTime) {
-    const [startHours, startMinutes] = this.startTime.split(':').map(Number);
-    const [endHours, endMinutes] = this.endTime.split(':').map(Number);
-    
-    let durationMinutes = (endHours * 60 + endMinutes) - (startHours * 60 + startMinutes);
-    
+    const [startHours, startMinutes] = this.startTime.split(":").map(Number);
+    const [endHours, endMinutes] = this.endTime.split(":").map(Number);
+
+    let durationMinutes =
+      endHours * 60 + endMinutes - (startHours * 60 + startMinutes);
+
     if (durationMinutes < 0) {
       durationMinutes += 24 * 60;
     }
-    
+
     this.duration = durationMinutes;
   }
   next();
 });
 
-const ClientAppointment = mongoose.model<IClientAppointmentDocument>("ClientAppointment", clientAppointmentSchema);
+const ClientAppointment = mongoose.model<IClientAppointmentDocument>(
+  "ClientAppointment",
+  clientAppointmentSchema
+);
 
 export default ClientAppointment;

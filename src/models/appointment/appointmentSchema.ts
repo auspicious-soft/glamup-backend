@@ -55,6 +55,8 @@ export interface IAppointment {
   isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
+  notes?: string;
+
 }
 
 export interface IAppointmentDocument extends mongoose.Document, IAppointment {}
@@ -134,6 +136,10 @@ clientModel: {
     //   type: String,
     //   required: true,
     // },
+     notes: {
+      type: String,
+      default: "",
+    },
     services: [{
       serviceId: {
         type: mongoose.Schema.Types.ObjectId,

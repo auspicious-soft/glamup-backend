@@ -118,6 +118,7 @@ export const createAppointment = async (req: Request, res: Response) => {
       phoneNumber,
       countryCode,
       countryCallingCode,
+      notes,
     } = req.body;
 
     // Get business ID first as it's needed for both paths
@@ -206,7 +207,7 @@ export const createAppointment = async (req: Request, res: Response) => {
                 region: "",
                 country: "",
               },
-              notes: "",
+              notes: notes || "",
               tags: [],
               businessId: businessId,
               preferredServices: [],
@@ -821,6 +822,7 @@ export const updateAppointment = async (req: Request, res: Response) => {
       endTime,
       discount,
       cancellationReason,
+      notes,
     } = req.body;
 
     const businessId = await validateBusinessProfile(userId, res, session);
@@ -872,6 +874,7 @@ export const updateAppointment = async (req: Request, res: Response) => {
               cancellationDate: new Date(),
               cancellationBy: "business",
               updatedBy: new mongoose.Types.ObjectId(userId),
+              notes: notes !== undefined ? notes : existingAppointment.notes,
             },
           },
           { session }
@@ -892,6 +895,7 @@ export const updateAppointment = async (req: Request, res: Response) => {
                   cancellationReason || "Cancelled by business",
                 cancellationDate: new Date(),
                 cancellationBy: "business",
+                notes: notes !== undefined ? notes : clientAppointment.notes,
               },
             },
             { session }
@@ -901,6 +905,7 @@ export const updateAppointment = async (req: Request, res: Response) => {
         const allowedUpdates = {
           status: status,
           updatedBy: new mongoose.Types.ObjectId(userId),
+          notes: notes !== undefined ? notes : existingAppointment.notes,
         };
 
         await Appointment.findByIdAndUpdate(
@@ -917,7 +922,12 @@ export const updateAppointment = async (req: Request, res: Response) => {
         if (clientAppointment) {
           await ClientAppointment.findByIdAndUpdate(
             clientAppointment._id,
-            { $set: { status: status } },
+            {
+              $set: {
+                status: status,
+                notes: notes !== undefined ? notes : clientAppointment.notes,
+              },
+            },
             { session }
           );
         }
@@ -1079,44 +1089,58 @@ export const updateAppointment = async (req: Request, res: Response) => {
       }
 
       // Validate team member availability if changed
-      const teamMemberChanged = isTeamMemberChanged(teamMemberId, existingAppointment);
-const startDateChanged = startDate && new Date(startDate).toISOString() !== existingAppointment.date.toISOString();
-const startTimeChanged = startTime && startTime !== existingAppointment.startTime;
-const endTimeChanged = endTime && endTime !== existingAppointment.endTime;
-     
-if (teamMemberChanged || startDateChanged || startTimeChanged || endTimeChanged) {
-  const updateData = {
-    teamMemberId: teamMemberId || existingAppointment.teamMemberId,
-    startDate: startDate ? new Date(startDate) : existingAppointment.date,
-    endDate: endDate ? new Date(endDate) : existingAppointment.endDate || existingAppointment.date,
-    startTime: startTime || existingAppointment.startTime,
-    endTime: finalEndTime,
-    clientId: existingAppointment.clientId,
-    serviceIds: finalServiceIds,
-    packageId: finalPackageId,
-    categoryId,
-  };
+      const teamMemberChanged = isTeamMemberChanged(
+        teamMemberId,
+        existingAppointment
+      );
+      const startDateChanged =
+        startDate &&
+        new Date(startDate).toISOString() !==
+          existingAppointment.date.toISOString();
+      const startTimeChanged =
+        startTime && startTime !== existingAppointment.startTime;
+      const endTimeChanged = endTime && endTime !== existingAppointment.endTime;
 
-  const isAvailable = await isTimeSlotAvailable(
-    updateData.teamMemberId,
-    updateData.startDate,
-    updateData.endDate,
-    updateData.startTime,
-    updateData.endTime,
-    existingAppointment.clientId.toString(),
-    appointmentId
-  );
+      if (
+        teamMemberChanged ||
+        startDateChanged ||
+        startTimeChanged ||
+        endTimeChanged
+      ) {
+        const updateData = {
+          teamMemberId: teamMemberId || existingAppointment.teamMemberId,
+          startDate: startDate ? new Date(startDate) : existingAppointment.date,
+          endDate: endDate
+            ? new Date(endDate)
+            : existingAppointment.endDate || existingAppointment.date,
+          startTime: startTime || existingAppointment.startTime,
+          endTime: finalEndTime,
+          clientId: existingAppointment.clientId,
+          serviceIds: finalServiceIds,
+          packageId: finalPackageId,
+          categoryId,
+        };
 
-  if (!isAvailable) {
-    await session.abortTransaction();
-    session.endSession();
-    return errorResponseHandler(
-      "Selected time slot is not available for the team member",
-      httpStatusCode.BAD_REQUEST,
-      res
-    );
-  }
-}
+        const isAvailable = await isTimeSlotAvailable(
+          updateData.teamMemberId,
+          updateData.startDate,
+          updateData.endDate,
+          updateData.startTime,
+          updateData.endTime,
+          existingAppointment.clientId.toString(),
+          appointmentId
+        );
+
+        if (!isAvailable) {
+          await session.abortTransaction();
+          session.endSession();
+          return errorResponseHandler(
+            "Selected time slot is not available for the team member",
+            httpStatusCode.BAD_REQUEST,
+            res
+          );
+        }
+      }
       // Validate appointment entities
       const validationResult = await validateAppointmentEntities(
         existingAppointment.clientId,
@@ -1180,6 +1204,7 @@ if (teamMemberChanged || startDateChanged || startTimeChanged || endTimeChanged)
           $set: {
             ...appointmentData,
             status: status !== undefined ? status : existingAppointment.status,
+              notes: notes !== undefined ? notes : existingAppointment.notes,
             updatedBy: new mongoose.Types.ObjectId(userId),
           },
         },
@@ -1601,7 +1626,9 @@ export const getClientServiceHistory = async (req: Request, res: Response) => {
 
     // Log the number of matching appointments
     const totalAppointments = await Appointment.countDocuments(query);
-    console.log(`Total appointments found for client ${clientId}: ${totalAppointments}`);
+    console.log(
+      `Total appointments found for client ${clientId}: ${totalAppointments}`
+    );
 
     if (totalAppointments === 0) {
       return successResponse(res, "No appointments found for client", {
@@ -1621,7 +1648,8 @@ export const getClientServiceHistory = async (req: Request, res: Response) => {
     }
 
     // Check if appointments have services
-    const appointmentsWithServices = await Appointment.find(query).select("services");
+    const appointmentsWithServices =
+      await Appointment.find(query).select("services");
     const appointmentsWithNonEmptyServices = appointmentsWithServices.filter(
       (appt) => appt.services && appt.services.length > 0
     );
@@ -1663,13 +1691,8 @@ export const getClientServiceHistory = async (req: Request, res: Response) => {
       { $sort: { count: -1, lastBooked: -1 } },
       {
         $facet: {
-          paginatedResults: [
-            { $skip: skip },
-            { $limit: limitNum },
-          ],
-          totalCount: [
-            { $count: "total" },
-          ],
+          paginatedResults: [{ $skip: skip }, { $limit: limitNum }],
+          totalCount: [{ $count: "total" }],
         },
       },
     ]);
@@ -1688,7 +1711,8 @@ export const getClientServiceHistory = async (req: Request, res: Response) => {
         const appointmentDate = new Date(appointment.date);
         const [hours, minutes] = appointment.startTime.split(":").map(Number);
         appointmentDate.setHours(hours, minutes, 0, 0);
-        const timeStatus = appointmentDate < currentDateTime ? "Past" : "Upcoming";
+        const timeStatus =
+          appointmentDate < currentDateTime ? "Past" : "Upcoming";
         return {
           appointmentId: appointment.appointmentId,
           date: appointment.date,
@@ -1703,7 +1727,10 @@ export const getClientServiceHistory = async (req: Request, res: Response) => {
     }));
 
     // Prepare pagination metadata
-    const paginationMetadata = preparePaginationMetadata(totalServices, pagination);
+    const paginationMetadata = preparePaginationMetadata(
+      totalServices,
+      pagination
+    );
 
     return successResponse(res, "Client service history fetched successfully", {
       client: {
