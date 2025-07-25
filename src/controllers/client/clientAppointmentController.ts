@@ -964,10 +964,13 @@ export const updateClientAppointment = async (req: Request, res: Response) => {
       serviceIds,
       packageId,
       date,
-      startTime,
+      // startTime,
       endTime,
       notes,
     } = req.body;
+
+    const startTime = new Date(date).toISOString().slice(11, 16);
+
 
     // Validate appointmentId
     if (!mongoose.Types.ObjectId.isValid(appointmentId)) {
