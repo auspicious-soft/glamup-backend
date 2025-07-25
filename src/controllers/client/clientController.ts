@@ -13,25 +13,32 @@ import Appointment from "models/appointment/appointmentSchema";
 import TeamMember from "models/team/teamMemberSchema";
 import RegisteredClient from "models/registeredClient/registeredClientSchema";
 import { validateUserAuth } from "utils/user/usercontrollerUtils";
+import Package from "models/package/packageSchema";
 
-const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+const haversineDistance = (
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number => {
   const R = 6371; // Earth's radius in km
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c; // Distance in km
 };
-
 
 // Get all services for a specific business
 export const getBusinessServices = async (req: Request, res: Response) => {
   try {
     const { businessId } = req.params;
-    
+
     if (!mongoose.Types.ObjectId.isValid(businessId)) {
       return errorResponseHandler(
         "Invalid business ID format",
@@ -39,14 +46,14 @@ export const getBusinessServices = async (req: Request, res: Response) => {
         res
       );
     }
-    
+
     // Check if business exists and is active
     const business = await UserBusinessProfile.findOne({
       _id: businessId,
       status: "active",
-      isDeleted: false
+      isDeleted: false,
     });
-    
+
     if (!business) {
       return errorResponseHandler(
         "Business profile not found or inactive",
@@ -54,14 +61,14 @@ export const getBusinessServices = async (req: Request, res: Response) => {
         res
       );
     }
-    
+
     // Get all active services for this business
     const services = await Service.find({
       businessId: businessId,
       isActive: true,
-      isDeleted: false
+      isDeleted: false,
     }).sort({ name: 1 });
-    
+
     return successResponse(
       res,
       "Business services fetched successfully",
@@ -69,29 +76,28 @@ export const getBusinessServices = async (req: Request, res: Response) => {
         business: {
           _id: business._id,
           businessName: business.businessName,
-          businessProfilePic: business.businessProfilePic
+          businessProfilePic: business.businessProfilePic,
         },
         services,
-        count: services.length
+        count: services.length,
       },
       httpStatusCode.OK
     );
   } catch (error: any) {
     console.error("Error fetching business services:", error);
     const parsedError = errorParser(error);
-    return errorResponseHandler(
-      parsedError.message,
-      parsedError.code,
-      res
-    );
+    return errorResponseHandler(parsedError.message, parsedError.code, res);
   }
 };
 
 // Get all categories with their services for a specific business
-export const getBusinessCategoriesWithServices = async (req: Request, res: Response) => {
+export const getBusinessCategoriesWithServices = async (
+  req: Request,
+  res: Response
+) => {
   try {
     const { businessId } = req.params;
-    
+
     if (!mongoose.Types.ObjectId.isValid(businessId)) {
       return errorResponseHandler(
         "Invalid business ID format",
@@ -99,14 +105,14 @@ export const getBusinessCategoriesWithServices = async (req: Request, res: Respo
         res
       );
     }
-    
+
     // Check if business exists and is active
     const business = await UserBusinessProfile.findOne({
       _id: businessId,
       status: "active",
-      isDeleted: false
+      isDeleted: false,
     });
-    
+
     if (!business) {
       return errorResponseHandler(
         "Business profile not found or inactive",
@@ -114,33 +120,34 @@ export const getBusinessCategoriesWithServices = async (req: Request, res: Respo
         res
       );
     }
-    
+
     // Get regular categories - only active ones
-    const categories = await Category.find({ 
+    const categories = await Category.find({
       businessId: businessId,
       isActive: true,
-      isDeleted: false 
+      isDeleted: false,
     }).sort({ name: 1 });
-    
+
     // Get global categories from business profile - only active ones
-    const globalCategories = business.selectedCategories?.filter(gc => gc.isActive) || [];
-    
+    const globalCategories =
+      business.selectedCategories?.filter((gc) => gc.isActive) || [];
+
     // Get global category IDs
-    const globalCategoryIds = globalCategories.map(gc => gc.categoryId);
-    
+    const globalCategoryIds = globalCategories.map((gc) => gc.categoryId);
+
     // Fetch global category details including descriptions
     const globalCategoryDetails = await mongoose.model("GlobalCategory").find({
       _id: { $in: globalCategoryIds },
       isActive: true,
-      isDeleted: false
+      isDeleted: false,
     });
-    
+
     // Create a map for quick lookup
     const globalCategoryMap = new Map();
-    globalCategoryDetails.forEach(gc => {
+    globalCategoryDetails.forEach((gc) => {
       globalCategoryMap.set(gc._id.toString(), gc);
     });
-    
+
     // Process regular categories with their services
     const regularCategoriesWithServices = await Promise.all(
       categories.map(async (category) => {
@@ -149,7 +156,7 @@ export const getBusinessCategoriesWithServices = async (req: Request, res: Respo
           categoryId: category._id,
           businessId: businessId,
           isActive: true,
-          isDeleted: false
+          isDeleted: false,
         }).sort({ name: 1 });
 
         return {
@@ -157,11 +164,11 @@ export const getBusinessCategoriesWithServices = async (req: Request, res: Respo
           name: category.name,
           description: category.description || "",
           isGlobal: false,
-          services: services // This might be an empty array, which is fine
+          services: services, // This might be an empty array, which is fine
         };
       })
     );
-    
+
     // Process global categories with their services
     const globalCategoriesWithServices = await Promise.all(
       globalCategories.map(async (globalCat) => {
@@ -170,11 +177,13 @@ export const getBusinessCategoriesWithServices = async (req: Request, res: Respo
           categoryId: globalCat.categoryId,
           businessId: businessId,
           isActive: true,
-          isDeleted: false
+          isDeleted: false,
         }).sort({ name: 1 });
-        
+
         // Get global category details
-        const globalCatDetails = globalCategoryMap.get(globalCat.categoryId.toString());
+        const globalCatDetails = globalCategoryMap.get(
+          globalCat.categoryId.toString()
+        );
 
         return {
           _id: globalCat.categoryId,
@@ -182,17 +191,17 @@ export const getBusinessCategoriesWithServices = async (req: Request, res: Respo
           description: globalCatDetails?.description || "",
           icon: globalCatDetails?.icon || "",
           isGlobal: true,
-          services: services // This might be an empty array, which is fine
+          services: services, // This might be an empty array, which is fine
         };
       })
     );
-    
+
     // Include all categories, even those with no services
     const allCategoriesWithServices = [
       ...regularCategoriesWithServices,
-      ...globalCategoriesWithServices
+      ...globalCategoriesWithServices,
     ];
-    
+
     return successResponse(
       res,
       "Business categories with services fetched successfully",
@@ -200,29 +209,28 @@ export const getBusinessCategoriesWithServices = async (req: Request, res: Respo
         business: {
           _id: business._id,
           businessName: business.businessName,
-          businessProfilePic: business.businessProfilePic
+          businessProfilePic: business.businessProfilePic,
         },
         categoriesWithServices: allCategoriesWithServices,
-        totalCategories: allCategoriesWithServices.length
+        totalCategories: allCategoriesWithServices.length,
       },
       httpStatusCode.OK
     );
   } catch (error: any) {
     console.error("Error fetching business categories with services:", error);
     const parsedError = errorParser(error);
-    return errorResponseHandler(
-      parsedError.message,
-      parsedError.code,
-      res
-    );
+    return errorResponseHandler(parsedError.message, parsedError.code, res);
   }
 };
 
 // Get services for a specific category (global or regular) for a business
-export const getBusinessCategoryServices = async (req: Request, res: Response) => {
+export const getBusinessCategoryServices = async (
+  req: Request,
+  res: Response
+) => {
   try {
     const { businessId, categoryId } = req.query;
-    
+
     if (!businessId || !categoryId) {
       return errorResponseHandler(
         "Business ID and Category ID are required query parameters",
@@ -230,23 +238,25 @@ export const getBusinessCategoryServices = async (req: Request, res: Response) =
         res
       );
     }
-    
-    if (!mongoose.Types.ObjectId.isValid(businessId as string) || 
-        !mongoose.Types.ObjectId.isValid(categoryId as string)) {
+
+    if (
+      !mongoose.Types.ObjectId.isValid(businessId as string) ||
+      !mongoose.Types.ObjectId.isValid(categoryId as string)
+    ) {
       return errorResponseHandler(
         "Invalid ID format",
         httpStatusCode.BAD_REQUEST,
         res
       );
     }
-    
+
     // Check if business exists and is active
     const business = await UserBusinessProfile.findOne({
       _id: businessId,
       status: "active",
-      isDeleted: false
+      isDeleted: false,
     });
-    
+
     if (!business) {
       return errorResponseHandler(
         "Business profile not found or inactive",
@@ -254,25 +264,25 @@ export const getBusinessCategoryServices = async (req: Request, res: Response) =
         res
       );
     }
-    
+
     // Find services for this category and business
     const services = await Service.find({
       businessId: businessId,
       categoryId: categoryId,
       isActive: true,
-      isDeleted: false
+      isDeleted: false,
     }).sort({ name: 1 });
-    
+
     // Determine if this is a global category
     const isGlobalCategory = business.selectedCategories.some(
-      cat => cat.categoryId.toString() === categoryId
+      (cat) => cat.categoryId.toString() === categoryId
     );
-    
+
     // Get category name
     let categoryName = "";
     if (isGlobalCategory) {
       const globalCat = business.selectedCategories.find(
-        cat => cat.categoryId.toString() === categoryId
+        (cat) => cat.categoryId.toString() === categoryId
       );
       categoryName = globalCat ? globalCat.name : "";
     } else {
@@ -280,11 +290,11 @@ export const getBusinessCategoryServices = async (req: Request, res: Response) =
         _id: categoryId,
         businessId: businessId,
         isActive: true,
-        isDeleted: false
+        isDeleted: false,
       });
       categoryName = category ? category.name : "";
     }
-    
+
     return successResponse(
       res,
       "Category services fetched successfully",
@@ -292,43 +302,42 @@ export const getBusinessCategoryServices = async (req: Request, res: Response) =
         category: {
           _id: categoryId,
           name: categoryName,
-          isGlobal: isGlobalCategory
+          isGlobal: isGlobalCategory,
         },
         services,
-        count: services.length
+        count: services.length,
       },
       httpStatusCode.OK
     );
   } catch (error: any) {
     console.error("Error fetching category services:", error);
     const parsedError = errorParser(error);
-    return errorResponseHandler(
-      parsedError.message,
-      parsedError.code,
-      res
-    );
+    return errorResponseHandler(parsedError.message, parsedError.code, res);
   }
 };
 
-export const getBusinessesWithAppointments = async (req: Request, res: Response) => {
+export const getBusinessesWithAppointments = async (
+  req: Request,
+  res: Response
+) => {
   try {
     // Fetch all businesses
-    
+
     const businesses = await UserBusinessProfile.find({ isDeleted: false });
 
     // Get appointment counts for each business
     const appointmentCounts = await Appointment.aggregate([
       {
         $match: {
-          status: { $in: ["PENDING", "CONFIRMED"] }
-        }
+          status: { $in: ["PENDING", "CONFIRMED"] },
+        },
       },
       {
         $group: {
           _id: "$businessId",
-          count: { $sum: 1 }
-        }
-      }
+          count: { $sum: 1 },
+        },
+      },
     ]);
 
     // Map counts to businessId for quick lookup
@@ -337,26 +346,36 @@ export const getBusinessesWithAppointments = async (req: Request, res: Response)
       count: number;
     }
 
-    const countMap = appointmentCounts.reduce<Record<string, number>>((acc, curr: AppointmentCount) => {
-      acc[curr._id.toString()] = curr.count;
-      return acc;
-    }, {});
+    const countMap = appointmentCounts.reduce<Record<string, number>>(
+      (acc, curr: AppointmentCount) => {
+        acc[curr._id.toString()] = curr.count;
+        return acc;
+      },
+      {}
+    );
 
     // Attach appointmentCount to each business
-    interface BusinessWithAppointmentCount extends ReturnType<typeof businesses[number]['toObject']> {
+    interface BusinessWithAppointmentCount
+      extends ReturnType<(typeof businesses)[number]["toObject"]> {
       appointmentCount: number;
     }
 
-    const result: BusinessWithAppointmentCount[] = businesses.map((business: typeof businesses[number]) => ({
-      ...business.toObject(),
-      appointmentCount: countMap[business._id.toString()] || 0
-    }));
+    const result: BusinessWithAppointmentCount[] = businesses.map(
+      (business: (typeof businesses)[number]) => ({
+        ...business.toObject(),
+        appointmentCount: countMap[business._id.toString()] || 0,
+      })
+    );
 
     result.sort((a, b) => b.appointmentCount - a.appointmentCount);
-    const topBusinesses = result.slice(0, 10); 
-    return successResponse(res, "Businesses with appointment counts fetched successfully", {
-      businesses: topBusinesses
-    });
+    const topBusinesses = result.slice(0, 10);
+    return successResponse(
+      res,
+      "Businesses with appointment counts fetched successfully",
+      {
+        businesses: topBusinesses,
+      }
+    );
   } catch (error: any) {
     console.error("Error fetching businesses with appointments:", error);
     return errorResponseHandler(
@@ -383,38 +402,42 @@ export const getRecommendedBusinesses = async (req: Request, res: Response) => {
     const appointmentCounts = await Appointment.aggregate([
       {
         $match: {
-          clientId: new mongoose.Types.ObjectId(clientId)
-        }
+          clientId: new mongoose.Types.ObjectId(clientId),
+        },
       },
       {
         $group: {
           _id: "$businessId",
-          count: { $sum: 1 }
-        }
+          count: { $sum: 1 },
+        },
       },
       {
-        $sort: { count: -1 }
+        $sort: { count: -1 },
       },
       {
-        $limit: 10
-      }
+        $limit: 10,
+      },
     ]);
 
     // If no appointments, return empty array
     if (appointmentCounts.length === 0) {
-      return successResponse(res, "No recommended businesses found for client", {
-        businesses: []
-      });
+      return successResponse(
+        res,
+        "No recommended businesses found for client",
+        {
+          businesses: [],
+        }
+      );
     }
 
     // Fetch business details for the top businesses, excluding deleted ones
-    const businessIds = appointmentCounts.map(a => a._id);
+    const businessIds = appointmentCounts.map((a) => a._id);
     const businesses = await UserBusinessProfile.find({
       _id: { $in: businessIds },
-      isDeleted: { $ne: true } // Exclude businesses where isDeleted is true
+      isDeleted: { $ne: true }, // Exclude businesses where isDeleted is true
     }).select(
       "businessName businessProfilePic PhoneNumber countryCode email businessDescription " +
-      "websiteLink facebookLink instagramLink messengerLink country selectedCategories"
+        "websiteLink facebookLink instagramLink messengerLink country selectedCategories"
     );
 
     // Map counts to businessId for quick lookup
@@ -423,26 +446,32 @@ export const getRecommendedBusinesses = async (req: Request, res: Response) => {
       count: number;
     }
 
-    const countMap = appointmentCounts.reduce<Record<string, number>>((acc, curr: AppointmentCount) => {
-      acc[curr._id.toString()] = curr.count;
-      return acc;
-    }, {});
+    const countMap = appointmentCounts.reduce<Record<string, number>>(
+      (acc, curr: AppointmentCount) => {
+        acc[curr._id.toString()] = curr.count;
+        return acc;
+      },
+      {}
+    );
 
     // Attach appointmentCount to each business
-    interface BusinessWithAppointmentCount extends ReturnType<typeof businesses[number]['toObject']> {
+    interface BusinessWithAppointmentCount
+      extends ReturnType<(typeof businesses)[number]["toObject"]> {
       appointmentCount: number;
     }
 
-    const result: BusinessWithAppointmentCount[] = businesses.map((business: typeof businesses[number]) => ({
-      ...business.toObject(),
-      appointmentCount: countMap[business._id.toString()] || 0
-    }));
+    const result: BusinessWithAppointmentCount[] = businesses.map(
+      (business: (typeof businesses)[number]) => ({
+        ...business.toObject(),
+        appointmentCount: countMap[business._id.toString()] || 0,
+      })
+    );
 
     // Sort by appointment count (descending) to maintain order from aggregation
     result.sort((a, b) => b.appointmentCount - a.appointmentCount);
 
     return successResponse(res, "Recommended businesses fetched successfully", {
-      businesses: result
+      businesses: result,
     });
   } catch (error: any) {
     console.error("Error fetching recommended businesses:", error);
@@ -454,7 +483,10 @@ export const getRecommendedBusinesses = async (req: Request, res: Response) => {
   }
 };
 
-export const getBusinessesWithinRadius = async (req: Request, res: Response) => {
+export const getBusinessesWithinRadius = async (
+  req: Request,
+  res: Response
+) => {
   try {
     const { latitude, longitude, radius, serviceOrVenue, date } = req.query;
 
@@ -534,22 +566,33 @@ export const getBusinessesWithinRadius = async (req: Request, res: Response) => 
           res
         );
       }
-      const dayOfWeek = parsedDate.toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
-      filteredBusinesses = geoBusinesses.filter(business => {
+      const dayOfWeek = parsedDate
+        .toLocaleDateString("en-US", { weekday: "long" })
+        .toLowerCase();
+      filteredBusinesses = geoBusinesses.filter((business) => {
         const hours = business.businessHours?.[dayOfWeek];
-        return !hours || (hours.isOpen && Array.isArray(hours.timeSlots) && hours.timeSlots.length > 0);
+        return (
+          !hours ||
+          (hours.isOpen &&
+            Array.isArray(hours.timeSlots) &&
+            hours.timeSlots.length > 0)
+        );
       });
     }
 
     console.log("filteredBusinesses:", filteredBusinesses.length);
 
     // Step 3: If no serviceOrVenue, return all filtered businesses
-    if (!serviceOrVenue || typeof serviceOrVenue !== "string" || !serviceOrVenue.trim()) {
+    if (
+      !serviceOrVenue ||
+      typeof serviceOrVenue !== "string" ||
+      !serviceOrVenue.trim()
+    ) {
       return successResponse(
         res,
         "Businesses within radius fetched successfully",
         {
-          businesses: filteredBusinesses.map(business => ({
+          businesses: filteredBusinesses.map((business) => ({
             _id: business._id,
             businessName: business.businessName,
             businessProfilePic: business.businessProfilePic,
@@ -574,10 +617,10 @@ export const getBusinessesWithinRadius = async (req: Request, res: Response) => 
     let businessIds = new Set<string>();
 
     // Search by businessName
-    let matchedBusinesses = filteredBusinesses.filter(b =>
+    let matchedBusinesses = filteredBusinesses.filter((b) =>
       b.businessName?.toLowerCase().includes(searchValue.toLowerCase())
     );
-    matchedBusinesses.forEach(b => businessIds.add(b._id.toString()));
+    matchedBusinesses.forEach((b) => businessIds.add(b._id.toString()));
     console.log("matchedBusinesses (name):", matchedBusinesses.length);
 
     // Search by service businessId
@@ -587,16 +630,23 @@ export const getBusinessesWithinRadius = async (req: Request, res: Response) => 
         isActive: true,
         isDeleted: false,
       });
-      console.log("services found:", services.length, services.map(s => ({ name: s.name, businessId: s.businessId })));
+      console.log(
+        "services found:",
+        services.length,
+        services.map((s) => ({ name: s.name, businessId: s.businessId }))
+      );
 
       const serviceBusinessIds = services
-        .filter(s => s.businessId)
-        .map(s => s.businessId.toString());
-      matchedBusinesses = filteredBusinesses.filter(business =>
+        .filter((s) => s.businessId)
+        .map((s) => s.businessId.toString());
+      matchedBusinesses = filteredBusinesses.filter((business) =>
         serviceBusinessIds.includes(business._id.toString())
       );
-      matchedBusinesses.forEach(b => businessIds.add(b._id.toString()));
-      console.log("matchedBusinesses (service businessId):", matchedBusinesses.length);
+      matchedBusinesses.forEach((b) => businessIds.add(b._id.toString()));
+      console.log(
+        "matchedBusinesses (service businessId):",
+        matchedBusinesses.length
+      );
     }
 
     // Search by category name
@@ -606,15 +656,21 @@ export const getBusinessesWithinRadius = async (req: Request, res: Response) => 
         isActive: true,
         isDeleted: false,
       });
-      console.log("categories found:", categories.length, categories.map((c: any) => c.name));
+      console.log(
+        "categories found:",
+        categories.length,
+        categories.map((c: any) => c.name)
+      );
 
       const categoryIds = categories.map((c: any) => c._id.toString());
-      matchedBusinesses = filteredBusinesses.filter(business =>
-        business.selectedCategories?.some((gc: any) =>
-          categoryIds.includes(gc.categoryId?.toString()) || gc.name?.toLowerCase().includes(searchValue.toLowerCase())
+      matchedBusinesses = filteredBusinesses.filter((business) =>
+        business.selectedCategories?.some(
+          (gc: any) =>
+            categoryIds.includes(gc.categoryId?.toString()) ||
+            gc.name?.toLowerCase().includes(searchValue.toLowerCase())
         )
       );
-      matchedBusinesses.forEach(b => businessIds.add(b._id.toString()));
+      matchedBusinesses.forEach((b) => businessIds.add(b._id.toString()));
       console.log("matchedBusinesses (category):", matchedBusinesses.length);
     }
 
@@ -625,35 +681,50 @@ export const getBusinessesWithinRadius = async (req: Request, res: Response) => 
         isActive: true,
         isDeleted: false,
       });
-      console.log("services (category) found:", services.length, services.map(s => ({ name: s.name, categoryId: s.categoryId })));
+      console.log(
+        "services (category) found:",
+        services.length,
+        services.map((s) => ({ name: s.name, categoryId: s.categoryId }))
+      );
 
       const serviceCategoryIds = services
-        .filter(s => s.categoryId)
-        .map(s => s.categoryId.toString());
+        .filter((s) => s.categoryId)
+        .map((s) => s.categoryId.toString());
       const categories = await Category.find({
         _id: { $in: serviceCategoryIds },
         isActive: true,
         isDeleted: false,
       });
       const categoryIds = categories.map((c: any) => c._id.toString());
-      console.log("categories from services:", categories.length, categories.map(c => c.name));
-
-      matchedBusinesses = filteredBusinesses.filter(business =>
-        business.selectedCategories?.some((gc: any) => categoryIds.includes(gc.categoryId?.toString()))
+      console.log(
+        "categories from services:",
+        categories.length,
+        categories.map((c) => c.name)
       );
-      matchedBusinesses.forEach(b => businessIds.add(b._id.toString()));
-      console.log("matchedBusinesses (service category):", matchedBusinesses.length);
+
+      matchedBusinesses = filteredBusinesses.filter((business) =>
+        business.selectedCategories?.some((gc: any) =>
+          categoryIds.includes(gc.categoryId?.toString())
+        )
+      );
+      matchedBusinesses.forEach((b) => businessIds.add(b._id.toString()));
+      console.log(
+        "matchedBusinesses (service category):",
+        matchedBusinesses.length
+      );
     }
 
     // Step 5: Prepare unique businesses
-    const uniqueBusinesses = filteredBusinesses.filter(b => businessIds.has(b._id.toString()));
+    const uniqueBusinesses = filteredBusinesses.filter((b) =>
+      businessIds.has(b._id.toString())
+    );
     console.log("uniqueBusinesses:", uniqueBusinesses.length);
 
     return successResponse(
       res,
       "Businesses within radius fetched successfully",
       {
-        businesses: uniqueBusinesses.map(business => ({
+        businesses: uniqueBusinesses.map((business) => ({
           _id: business._id,
           businessName: business.businessName,
           businessProfilePic: business.businessProfilePic,
@@ -709,7 +780,9 @@ export const getBusinessProfileById = async (req: Request, res: Response) => {
     // --- FAVOURITE LOGIC ---
     let isFavourite = false;
     if (clientId && Types.ObjectId.isValid(clientId as string)) {
-      const client = await RegisteredClient.findById(clientId).select("favouriteBusinesses");
+      const client = await RegisteredClient.findById(clientId).select(
+        "favouriteBusinesses"
+      );
       if (client && Array.isArray(client.favouriteBusinesses)) {
         isFavourite = client.favouriteBusinesses.some(
           (fav: any) => fav.businessId.toString() === businessId
@@ -722,7 +795,7 @@ export const getBusinessProfileById = async (req: Request, res: Response) => {
       businessId: businessId,
       isDeleted: false,
       isActive: true,
-      $or: [{ isGlobal: { $exists: false } }, { isGlobal: false }]
+      $or: [{ isGlobal: { $exists: false } }, { isGlobal: false }],
     }).sort({ name: 1 });
 
     const categoryAndServices = [];
@@ -732,51 +805,61 @@ export const getBusinessProfileById = async (req: Request, res: Response) => {
         categoryId: category._id,
         businessId: businessId,
         isDeleted: false,
-        isActive: true
+        isActive: true,
       }).sort({ name: 1 });
 
       if (services.length > 0) {
-        const serviceWithTeamMembers = await Promise.all(services.map(async (service) => {
-          // Fetch only active and non-deleted team members
-          const teamMembers = await TeamMember.find({
-            _id: { $in: service.teamMembers.map(tm => tm.memberId) },
-            isActive: true,
-            isDeleted: false
-          }).select('profilePicture name email phoneNumber countryCode countryCallingCode ');
+        const serviceWithTeamMembers = await Promise.all(
+          services.map(async (service) => {
+            // Fetch only active and non-deleted team members
+            const teamMembers = await TeamMember.find({
+              _id: { $in: service.teamMembers.map((tm) => tm.memberId) },
+              isActive: true,
+              isDeleted: false,
+            }).select(
+              "profilePicture name email phoneNumber countryCode countryCallingCode "
+            );
 
-          return {
-            _id: service._id,
-            name: service.name,
-            description: service.description,
-            duration: service.duration,
-            price: service.price,
-            priceType: service.priceType,
-            maxPrice: service.maxPrice,
-            currency: service.currency,
-            icon: service.icon,
-            tags: service.tags,
-            isActive: service.isActive,
-            teamMembers: teamMembers.map(tm => ({
-              memberId: tm._id,
-              name: tm.name,
-              profilePicture: tm.profilePicture,
-              email:tm.email,
-              phoneNumber:tm.phoneNumber,
-              countryCode:tm.countryCode,
-              countryCallingCode:tm.countryCallingCode,
-              _id: tm._id
-            }))
-          };
-        }));
+            return {
+              _id: service._id,
+              name: service.name,
+              description: service.description,
+              duration: service.duration,
+              price: service.price,
+              priceType: service.priceType,
+              maxPrice: service.maxPrice,
+              currency: service.currency,
+              icon: service.icon,
+              tags: service.tags,
+              isActive: service.isActive,
+              teamMembers: teamMembers.map((tm) => ({
+                memberId: tm._id,
+                name: tm.name,
+                profilePicture: tm.profilePicture,
+                email: tm.email,
+                phoneNumber: tm.phoneNumber,
+                countryCode: tm.countryCode,
+                countryCallingCode: tm.countryCallingCode,
+                _id: tm._id,
+              })),
+            };
+          })
+        );
 
         categoryAndServices.push({
           _id: category._id,
           name: category.name,
           description: category.description,
-          services: serviceWithTeamMembers
+          services: serviceWithTeamMembers,
         });
       }
     }
+
+    const packages = await Package.find({
+      businessId: businessId,
+      isDeleted: false,
+      isActive: true,
+    }).sort({ name: 1 });
 
     if (!businessProfile) {
       if (session && session.inTransaction()) {
@@ -793,9 +876,10 @@ export const getBusinessProfileById = async (req: Request, res: Response) => {
     return successResponse(res, "Business Profile fetched Successfully.", {
       businessProfile: {
         ...businessProfile.toObject(),
-        isFavourite // <-- include the key here
+        isFavourite, // <-- include the key here
       },
       categoryAndServices,
+      packages,
     });
   } catch (error: any) {
     console.error("Error fetching business profile:", error);
@@ -805,13 +889,13 @@ export const getBusinessProfileById = async (req: Request, res: Response) => {
       res
     );
   }
-}
+};
 
 export const getTeamMembersByServices = async (req: Request, res: Response) => {
   try {
     const idsParam = req.query.ids;
-    const ids = typeof idsParam === "string" ? idsParam.split(',') : [];
-    
+    const ids = typeof idsParam === "string" ? idsParam.split(",") : [];
+
     if (!ids || ids.length === 0) {
       return errorResponseHandler(
         "Service IDs are required to get Team Members.",
@@ -820,24 +904,28 @@ export const getTeamMembersByServices = async (req: Request, res: Response) => {
       );
     }
 
-    const services = await Service.find({ _id: { $in: ids } }).populate("teamMembers") as Array<typeof Service.prototype>;
+    const services = (await Service.find({ _id: { $in: ids } }).populate(
+      "teamMembers"
+    )) as Array<typeof Service.prototype>;
 
     // Check if all requested IDs were found
-    const foundServiceIds = services.map(service => (service._id as mongoose.Types.ObjectId).toString());
-    const notFoundIds = ids.filter(id => !foundServiceIds.includes(id));
+    const foundServiceIds = services.map((service) =>
+      (service._id as mongoose.Types.ObjectId).toString()
+    );
+    const notFoundIds = ids.filter((id) => !foundServiceIds.includes(id));
 
     if (notFoundIds.length > 0) {
       return errorResponseHandler(
-        `Services not found for IDs: ${notFoundIds.join(', ')}`,
+        `Services not found for IDs: ${notFoundIds.join(", ")}`,
         httpStatusCode.NOT_FOUND,
         res
       );
     }
 
-    const returnServices = services.map(service => ({
+    const returnServices = services.map((service) => ({
       service: {
         _id: service._id,
-        name: service.name
+        name: service.name,
       },
       teamMember: service.teamMembers,
     }));
@@ -850,13 +938,9 @@ export const getTeamMembersByServices = async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error("Error fetching business services:", error);
     const parsedError = errorParser(error);
-    return errorResponseHandler(
-      parsedError.message,
-      parsedError.code,
-      res
-    );
+    return errorResponseHandler(parsedError.message, parsedError.code, res);
   }
-}
+};
 
 export const addFavouriteBusiness = async (req: Request, res: Response) => {
   try {
@@ -935,11 +1019,10 @@ export const addFavouriteBusiness = async (req: Request, res: Response) => {
   }
 };
 
-
 export const getFavouriteBusinesses = async (req: Request, res: Response) => {
   try {
     // Get clientId from token
-   const { clientId } = req.params;
+    const { clientId } = req.params;
 
     if (!clientId || !mongoose.Types.ObjectId.isValid(clientId)) {
       return errorResponseHandler(
@@ -958,7 +1041,9 @@ export const getFavouriteBusinesses = async (req: Request, res: Response) => {
       );
     }
 
-    const favouriteBusinessIds = client.favouriteBusinesses.map((fav: any) => fav.businessId);
+    const favouriteBusinessIds = client.favouriteBusinesses.map(
+      (fav: any) => fav.businessId
+    );
 
     if (!favouriteBusinessIds.length) {
       return successResponse(res, "No favourite businesses found", []);
@@ -968,13 +1053,13 @@ export const getFavouriteBusinesses = async (req: Request, res: Response) => {
     const businesses = await UserBusinessProfile.find({
       _id: { $in: favouriteBusinessIds },
       isDeleted: false,
-      status: "active"
+      status: "active",
     }).select(
       "_id businessName email businessProfilePic businessDescription PhoneNumber countryCode countryCallingCode address"
     );
 
     // Format response as requested
-    const formatted = businesses.map(b => ({
+    const formatted = businesses.map((b) => ({
       _id: b._id,
       name: b.businessName,
       email: b.email,
@@ -983,10 +1068,14 @@ export const getFavouriteBusinesses = async (req: Request, res: Response) => {
       phoneNumber: b.PhoneNumber,
       countryCode: b.countryCode,
       callingCountryCode: b.countryCallingCode,
-      address:b.address,
+      address: b.address,
     }));
 
-    return successResponse(res, "Favourite businesses fetched successfully", formatted);
+    return successResponse(
+      res,
+      "Favourite businesses fetched successfully",
+      formatted
+    );
   } catch (error: any) {
     return errorResponseHandler(
       error.message || "Internal server error",
