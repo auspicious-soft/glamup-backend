@@ -861,6 +861,58 @@ export const getBusinessProfileById = async (req: Request, res: Response) => {
       isActive: true,
     }).sort({ name: 1 });
 
+    // Process packages to include team members from their services
+    const packagesWithTeamMembers = await Promise.all(
+      packages.map(async (pkg) => {
+        // Fetch services for the package
+        const packageServices = await Service.find({
+          _id: { $in: pkg.services.map((s: any) => s.serviceId) },
+          isDeleted: false,
+          isActive: true,
+        });
+
+        // Collect all team member IDs from services, avoiding duplicates
+        const teamMemberIds = new Set();
+        packageServices.forEach((service) => {
+          if (service.teamMembers && Array.isArray(service.teamMembers)) {
+            service.teamMembers.forEach((tm) => {
+              teamMemberIds.add(tm.memberId.toString());
+            });
+          }
+        });
+
+        // Fetch team members for the collected IDs
+        const teamMembers = await TeamMember.find({
+          _id: {
+            $in: Array.from(teamMemberIds).map(
+              (id) => new Types.ObjectId(id as string)
+            ),
+          },
+          isActive: true,
+          isDeleted: false,
+        }).select(
+          "profilePicture name email phoneNumber countryCode countryCallingCode"
+        );
+
+        // Map team members to the desired format
+        const formattedTeamMembers = teamMembers.map((tm) => ({
+          memberId: tm._id,
+          name: tm.name,
+          profilePicture: tm.profilePicture,
+          email: tm.email,
+          phoneNumber: tm.phoneNumber,
+          countryCode: tm.countryCode,
+          countryCallingCode: tm.countryCallingCode,
+          _id: tm._id,
+        }));
+        // Return package with team members
+        return {
+          ...pkg.toObject(),
+          teamMembers: formattedTeamMembers,
+        };
+      })
+    );
+
     if (!businessProfile) {
       if (session && session.inTransaction()) {
         await session.abortTransaction();
@@ -876,10 +928,10 @@ export const getBusinessProfileById = async (req: Request, res: Response) => {
     return successResponse(res, "Business Profile fetched Successfully.", {
       businessProfile: {
         ...businessProfile.toObject(),
-        isFavourite, // <-- include the key here
+        isFavourite,
       },
       categoryAndServices,
-      packages,
+      packages: packagesWithTeamMembers,
     });
   } catch (error: any) {
     console.error("Error fetching business profile:", error);
