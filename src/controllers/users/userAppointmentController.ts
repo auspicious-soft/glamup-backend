@@ -44,6 +44,7 @@ import {
 } from "utils/mails/mail";
 import RegisteredClient from "models/registeredClient/registeredClientSchema";
 import Package from "models/package/packageSchema";
+import moment from "moment";
 
 // Helper function to calculate end time based on services duration
 const calculateEndTimeFromServices = async (
@@ -120,8 +121,13 @@ export const createAppointment = async (req: Request, res: Response) => {
       countryCallingCode,
       notes,
     } = req.body;
-    const startTime = new Date(startDate).toISOString().slice(11, 16);
-
+ // Check if the team member is available at the requested time
+   const startDateMoment = moment(startDate).utc();
+const startTime = startDateMoment.format('HH:mm');
+const normalizedStartDate = startDateMoment.startOf('day').toDate();
+const normalizedEndDate = endDate
+  ? moment(endDate).utc().startOf('day').toDate()
+  : normalizedStartDate;
     // Get business ID first as it's needed for both paths
     const businessId = await validateBusinessProfile(userId, res, session);
     if (!businessId) return;
@@ -354,33 +360,41 @@ export const createAppointment = async (req: Request, res: Response) => {
       );
     }
 
-    // Check if the team member is available at the requested time
-    const finalEndTime =
-      endTime ||
-      (packageId && (!serviceIds || serviceIds.length === 0)
-        ? (await Package.findById(packageId).session(session))?.duration
-        : await calculateEndTimeFromServices(startTime, parsedServiceIds)) ||
-      startTime;
+   
 
-    const isAvailable = await isTimeSlotAvailable(
-      teamMemberId,
-      new Date(startDate),
-      new Date(endDate || startDate),
-      startTime,
-      finalEndTime,
-      finalClientId
-    );
+const finalEndTime =
+  endTime ||
+  (packageId && (!serviceIds || serviceIds.length === 0)
+    ? await calculateEndTimeFromPackage(startTime, packageId, session)
+    : await calculateEndTimeFromServices(startTime, parsedServiceIds)) ||
+  startTime;
 
-    if (!isAvailable) {
-      await session.abortTransaction();
-      session.endSession();
-      return errorResponseHandler(
-        "Selected time slot is not available. Either the team member already has an appointment at this time or this client already has a booking for this time slot.",
-        httpStatusCode.CONFLICT,
-        res
-      );
-    }
+const isAvailable = await isTimeSlotAvailable(
+  teamMemberId,
+  normalizedStartDate,
+  normalizedEndDate,
+  startTime,
+  finalEndTime,
+  finalClientId
+);
 
+if (!isAvailable) {
+  console.log("Time slot conflict detected. Inputs:", {
+    teamMemberId,
+    normalizedStartDate,
+    normalizedEndDate,
+    startTime,
+    finalEndTime,
+    finalClientId,
+  });
+  await session.abortTransaction();
+  session.endSession();
+  return errorResponseHandler(
+    "Selected time slot is not available. Either the team member already has an appointment at this time or this client already has a booking for this time slot.",
+    httpStatusCode.CONFLICT,
+    res
+  );
+}
     const validationResult = await validateAppointmentEntities(
       finalClientId,
       teamMemberId,
