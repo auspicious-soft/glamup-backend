@@ -106,7 +106,7 @@ export const createAppointment = async (req: Request, res: Response) => {
       teamMemberId,
       startDate,
       endDate,
-      startTime,
+      // startTime,
       endTime,
       status,
       serviceIds,
@@ -120,6 +120,7 @@ export const createAppointment = async (req: Request, res: Response) => {
       countryCallingCode,
       notes,
     } = req.body;
+    const startTime = new Date(startDate).toISOString().slice(11, 16);
 
     // Get business ID first as it's needed for both paths
     const businessId = await validateBusinessProfile(userId, res, session);

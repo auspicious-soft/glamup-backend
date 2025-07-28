@@ -132,7 +132,7 @@ export const getAllCategories = async (req: Request, res: Response) => {
     const totalCategories = await Category.countDocuments(query);
     
     const categories = await Category.find(query)
-      .sort({ name: 1 })
+      .sort({  sortingOrderNo: 1 })
       .skip(skip)
       .limit(limit);
     
