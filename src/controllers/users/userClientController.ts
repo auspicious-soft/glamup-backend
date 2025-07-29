@@ -28,6 +28,8 @@ import RegisteredTeamMember from "models/registeredTeamMember/registeredTeamMemb
 import User from "models/user/userSchema";
 import Appointment from "models/appointment/appointmentSchema";
 import { preparePagination, preparePaginationMetadata } from "utils/appointment/appointmentUtils";
+import ClientAppointment from "models/clientAppointment/clientAppointmentSchema";
+import RegisteredClient from "models/registeredClient/registeredClientSchema";
 
 // Helper function to handle file upload to S3
 const uploadProfilePictureToS3 = async (req: Request, userEmail: string): Promise<{ key: string, fullUrl: string } | null> => {
@@ -239,18 +241,95 @@ export const getAllClients = async (req: Request, res: Response) => {
     const skip = (page - 1) * limit;
     const search = req.query.search as string;
 
-    const query = buildClientSearchQuery(businessId, search);
+    // Build query for regular clients
+    const clientQuery = buildClientSearchQuery(businessId, search);
     
-    const totalClients = await Client.countDocuments(query);
-    const clients = await Client.find(query)
+    // Fetch regular clients
+    const regularClients = await Client.find(clientQuery)
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limit);
+      .limit(limit)
+      .lean();
 
+    // Add clientModel to regular clients
+    const formattedRegularClients = regularClients.map(client => ({
+      ...client,
+      clientModel: 'Client-Within-Business'
+    }));
+
+    // Fetch registered clients who have booked appointments with this business
+    const clientAppointments = await ClientAppointment.find({
+      businessId: businessId,
+      isDeleted: false
+    }).select('clientId').lean();
+
+    const registeredClientIds = [...new Set(clientAppointments.map(appt => appt.clientId.toString()))];
+
+    // Build query for registered clients
+    let registeredClientQuery: any = {
+      _id: { $in: registeredClientIds },
+      isDeleted: false
+    };
+
+    if (search) {
+      registeredClientQuery.$or = [
+        { fullName: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } },
+        { phoneNumber: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    // Fetch registered clients
+    const registeredClients = await RegisteredClient.find(registeredClientQuery)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    // Transform registered clients to match Client schema structure
+    const formattedRegisteredClients = registeredClients.map(client => ({
+      _id: client._id,
+      name: client.fullName ,
+      email: client.email || '',
+      phoneNumber: client.phoneNumber || '',
+      countryCode: client.countryCode || '',
+      countryCallingCode: client.countryCallingCode || '',
+      profilePicture: client.profilePic || 'https://glamup-bucket.s3.eu-north-1.amazonaws.com/Dummy-Images/dummyClientPicture.png',
+      birthday: null,
+      gender: 'prefer_not_to_say',
+      address: {
+        street: '',
+        city: '',
+        region: '',
+        country: ''
+      },
+      notes: '',
+      tags: [],
+      businessId: null,
+      preferredServices: [],
+      preferredTeamMembers: [],
+      lastVisit: null,
+      isActive: true,
+      isDeleted: false,
+      createdAt: client.createdAt,
+      updatedAt: client.updatedAt,
+      clientModel: 'Client-Registered'
+    }));
+
+    // Combine and deduplicate clients
+    const allClients = [...formattedRegularClients, ...formattedRegisteredClients];
+    const uniqueClients = Array.from(
+      new Map(allClients.map(client => [client._id.toString(), client])).values()
+    );
+
+    // Apply pagination to combined results
+    const totalClients = await Client.countDocuments(clientQuery) + await RegisteredClient.countDocuments(registeredClientQuery);
+    const paginatedClients = uniqueClients.slice(skip, skip + limit);
+    
     const totalPages = Math.ceil(totalClients / limit);
 
     return successResponse(res, "Clients fetched successfully", {
-      clients,
+      clients: paginatedClients,
       pagination: {
         totalClients,
         totalPages,
