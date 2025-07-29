@@ -20,6 +20,7 @@ import {
   sendAppointmentCanceledEmailBusiness,
 } from "utils/mails/mail";
 import Package from "models/package/packageSchema";
+import moment from "moment";
 
 // Create a nanoid generator for appointment IDs
 const appointmentId = customAlphabet(
@@ -969,8 +970,17 @@ export const updateClientAppointment = async (req: Request, res: Response) => {
       notes,
     } = req.body;
 
-    const startTime = new Date(date).toISOString().slice(11, 16);
+let startTime: string | undefined;
 
+if (date) {
+  const parsedDate = moment.utc(date);
+  if (!parsedDate.isValid()) {
+    await session.abortTransaction();
+    session.endSession();
+    return errorResponseHandler("Invalid date format", httpStatusCode.BAD_REQUEST, res);
+  }
+  startTime = parsedDate.format("HH:mm");
+}
 
     // Validate appointmentId
     if (!mongoose.Types.ObjectId.isValid(appointmentId)) {
