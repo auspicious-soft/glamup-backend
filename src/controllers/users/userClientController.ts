@@ -393,18 +393,26 @@ export const getClientById = async (req: Request, res: Response) => {
     if (!(await validateObjectId(clientId, "Client", res))) return;
 
     // Find the client that belongs to this business
-    const client = await Client.findOne({
+    let client = await Client.findOne({
       _id: clientId,
       businessId: businessId,
       isDeleted: false
     });
-    
+
+    // If client not found in Client table, check RegisteredClient table
     if (!client) {
-      return errorResponseHandler(
-        "Client not found or you don't have permission to access it",
-        httpStatusCode.NOT_FOUND,
-        res
-      );
+      client = await RegisteredClient.findOne({
+        _id: clientId,
+        isDeleted: false
+      });
+
+      if (!client) {
+        return errorResponseHandler(
+          "Client not found or you don't have permission to access it",
+          httpStatusCode.NOT_FOUND,
+          res
+        );
+      }
     }
 
     const appointments = await Appointment.find({
