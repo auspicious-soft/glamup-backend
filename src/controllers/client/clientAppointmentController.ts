@@ -828,6 +828,7 @@ export const rescheduleClientAppointment = async (
         createdAt: undefined,
         updatedAt: undefined,
         createdVia: "client_booking",
+         cancellationReason: "",
       };
 
       if (teamMember) {
