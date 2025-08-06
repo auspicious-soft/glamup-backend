@@ -321,15 +321,37 @@ export const getBusinessesWithAppointments = async (
   res: Response
 ) => {
   try {
-    // Fetch all businesses
-
+    // Fetch all businesses that are not deleted
     const businesses = await UserBusinessProfile.find({ isDeleted: false });
 
-    // Get appointment counts for each business
+    // Fetch services to check if businesses have at least one service
+    const services = await Service.find({ isDeleted: false }).select('businessId');
+
+    // Create a Set of businessIds that have at least one service
+    const businessIdsWithServices = new Set(
+      services.map((service) => service.businessId.toString())
+    );
+
+    // Filter businesses to include only those with at least one service
+    const validBusinesses = businesses.filter((business) =>
+      businessIdsWithServices.has(business._id.toString())
+    );
+
+    // If no valid businesses found, return empty result
+    if (validBusinesses.length === 0) {
+      return successResponse(
+        res,
+        "No businesses with services found",
+        { businesses: [] }
+      );
+    }
+
+    // Get appointment counts for each valid business
     const appointmentCounts = await Appointment.aggregate([
       {
         $match: {
           status: { $in: ["PENDING", "CONFIRMED"] },
+          businessId: { $in: validBusinesses.map((b) => b._id) }, // Only include valid businesses
         },
       },
       {
@@ -354,32 +376,34 @@ export const getBusinessesWithAppointments = async (
       {}
     );
 
-    // Attach appointmentCount to each business
+    // Attach appointmentCount to each valid business
     interface BusinessWithAppointmentCount
       extends ReturnType<(typeof businesses)[number]["toObject"]> {
       appointmentCount: number;
     }
 
-    const result: BusinessWithAppointmentCount[] = businesses.map(
+    const result: BusinessWithAppointmentCount[] = validBusinesses.map(
       (business: (typeof businesses)[number]) => ({
         ...business.toObject(),
         appointmentCount: countMap[business._id.toString()] || 0,
       })
     );
 
+    // Sort by appointment count and get top 10
     result.sort((a, b) => b.appointmentCount - a.appointmentCount);
     const topBusinesses = result.slice(0, 10);
+
     return successResponse(
       res,
-      "Businesses with appointment counts fetched successfully",
+      "Businesses with appointment counts and services fetched successfully",
       {
         businesses: topBusinesses,
       }
     );
   } catch (error: any) {
-    console.error("Error fetching businesses with appointments:", error);
+    console.error("Error fetching businesses with appointments and services:", error);
     return errorResponseHandler(
-      "Failed to fetch businesses with appointments",
+      "Failed to fetch businesses with appointments and services",
       httpStatusCode.INTERNAL_SERVER_ERROR,
       res
     );
