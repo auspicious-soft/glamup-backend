@@ -532,18 +532,40 @@ export const getAppointmentsByDate = async (req: Request, res: Response) => {
       if (!businessId) return;
     }
 
-    const dateQuery = buildDateRangeQuery(
-      req.query.date,
-      req.query.startDate,
-      req.query.endDate
-    );
+    const { type, date, startDate, endDate, filterStartDate, filterEndDate, status } = req.query;
 
-    if (dateQuery && dateQuery.error) {
-      return errorResponseHandler(
-        dateQuery.error,
-        httpStatusCode.BAD_REQUEST,
-        res
-      );
+    let dateQuery;
+    if (type === "multi" && filterStartDate && filterEndDate) {
+      const start = new Date(filterStartDate as string);
+      const end = new Date(filterEndDate as string);
+
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        return errorResponseHandler(
+          "Invalid filter date format. Please use YYYY-MM-DD",
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
+
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+
+      dateQuery = {
+        $or: [
+          { date: { $gte: start, $lte: end } },
+          { endDate: { $gte: start, $lte: end } },
+          { date: { $lte: start }, endDate: { $gte: end } },
+        ],
+      };
+    } else {
+      dateQuery = buildDateRangeQuery(date, startDate, endDate);
+      if (dateQuery && dateQuery.error) {
+        return errorResponseHandler(
+          dateQuery.error,
+          httpStatusCode.BAD_REQUEST,
+          res
+        );
+      }
     }
 
     const query = buildAppointmentQuery(
@@ -592,11 +614,9 @@ export const getAppointmentsByDate = async (req: Request, res: Response) => {
         clientObj.profilePicture =
           clientObj.profilePic || clientObj.profilePicture || "";
         delete clientObj.profilePic;
-        // Assign cleaned object back to appointment
         (appt as any).clientId = clientObj;
       }
 
-      // If no clientId but client_booking, fetch RegisteredClient
       if (
         (!appt.clientId || appt.clientId === null) &&
         appt.createdVia === "client_booking"
@@ -633,11 +653,10 @@ export const getAppointmentsByDate = async (req: Request, res: Response) => {
       pagination
     );
 
-    // Parse the date from query
     const currentDate = new Date();
     currentDate.setHours(0, 0, 0, 0);
-    const inputDate = req.query.date
-      ? new Date(req.query.date as string)
+    const inputDate = date
+      ? new Date(date as string)
       : null;
 
     const baseDate =
@@ -665,15 +684,23 @@ export const getAppointmentsByDate = async (req: Request, res: Response) => {
     const monthlyUpcomingAppointments = await Appointment.countDocuments({
       businessId,
       isDeleted: false,
-      status: { $in: ["PENDING", "CONFIRMED"] },
-      date: { $gte: baseDate, $lte: endOfMonth },
+     ...(status ? {
+       status: { $in: [status] },
+     }:{
+       status: { $in: ["PENDING", "CONFIRMED", "CANCELLED"] },
+     }),
+      date: { $gte: filterStartDate, $lte: filterEndDate },
     });
 
     const weeklyUpcomingAppointments = await Appointment.countDocuments({
       businessId,
       isDeleted: false,
-      status: { $in: ["PENDING", "CONFIRMED"] },
-      date: { $gte: baseDate, $lte: endOfWeek },
+     ...(status ? {
+       status: { $in: [status] },
+     }:{
+       status: { $in: ["PENDING", "CONFIRMED", "CANCELLED"] },
+     }),
+      date: { $gte: filterStartDate, $lte: filterEndDate },
     });
 
     return successResponse(res, "Appointments fetched successfully", {
