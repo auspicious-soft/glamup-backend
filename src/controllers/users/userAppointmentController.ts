@@ -121,13 +121,13 @@ export const createAppointment = async (req: Request, res: Response) => {
       countryCallingCode,
       notes,
     } = req.body;
- // Check if the team member is available at the requested time
-   const startDateMoment = moment(startDate).utc();
-const startTime = startDateMoment.format('HH:mm');
-const normalizedStartDate = startDateMoment.startOf('day').toDate();
-const normalizedEndDate = endDate
-  ? moment(endDate).utc().startOf('day').toDate()
-  : normalizedStartDate;
+    // Check if the team member is available at the requested time
+    const startDateMoment = moment(startDate).utc();
+    const startTime = startDateMoment.format("HH:mm");
+    const normalizedStartDate = startDateMoment.startOf("day").toDate();
+    const normalizedEndDate = endDate
+      ? moment(endDate).utc().startOf("day").toDate()
+      : normalizedStartDate;
     // Get business ID first as it's needed for both paths
     const businessId = await validateBusinessProfile(userId, res, session);
     if (!businessId) return;
@@ -360,41 +360,39 @@ const normalizedEndDate = endDate
       );
     }
 
-   
+    const finalEndTime =
+      endTime ||
+      (packageId && (!serviceIds || serviceIds.length === 0)
+        ? await calculateEndTimeFromPackage(startTime, packageId, session)
+        : await calculateEndTimeFromServices(startTime, parsedServiceIds)) ||
+      startTime;
 
-const finalEndTime =
-  endTime ||
-  (packageId && (!serviceIds || serviceIds.length === 0)
-    ? await calculateEndTimeFromPackage(startTime, packageId, session)
-    : await calculateEndTimeFromServices(startTime, parsedServiceIds)) ||
-  startTime;
+    const isAvailable = await isTimeSlotAvailable(
+      teamMemberId,
+      normalizedStartDate,
+      normalizedEndDate,
+      startTime,
+      finalEndTime,
+      finalClientId
+    );
 
-const isAvailable = await isTimeSlotAvailable(
-  teamMemberId,
-  normalizedStartDate,
-  normalizedEndDate,
-  startTime,
-  finalEndTime,
-  finalClientId
-);
-
-if (!isAvailable) {
-  console.log("Time slot conflict detected. Inputs:", {
-    teamMemberId,
-    normalizedStartDate,
-    normalizedEndDate,
-    startTime,
-    finalEndTime,
-    finalClientId,
-  });
-  await session.abortTransaction();
-  session.endSession();
-  return errorResponseHandler(
-    "Selected time slot is not available. Either the team member already has an appointment at this time or this client already has a booking for this time slot.",
-    httpStatusCode.CONFLICT,
-    res
-  );
-}
+    if (!isAvailable) {
+      console.log("Time slot conflict detected. Inputs:", {
+        teamMemberId,
+        normalizedStartDate,
+        normalizedEndDate,
+        startTime,
+        finalEndTime,
+        finalClientId,
+      });
+      await session.abortTransaction();
+      session.endSession();
+      return errorResponseHandler(
+        "Selected time slot is not available. Either the team member already has an appointment at this time or this client already has a booking for this time slot.",
+        httpStatusCode.CONFLICT,
+        res
+      );
+    }
     const validationResult = await validateAppointmentEntities(
       finalClientId,
       teamMemberId,
@@ -532,7 +530,15 @@ export const getAppointmentsByDate = async (req: Request, res: Response) => {
       if (!businessId) return;
     }
 
-    const { type, date, startDate, endDate, filterStartDate, filterEndDate, status } = req.query;
+    const {
+      type,
+      date,
+      startDate,
+      endDate,
+      filterStartDate,
+      filterEndDate,
+      status,
+    } = req.query;
 
     let dateQuery;
     if (type === "multi" && filterStartDate && filterEndDate) {
@@ -655,9 +661,7 @@ export const getAppointmentsByDate = async (req: Request, res: Response) => {
 
     const currentDate = new Date();
     currentDate.setHours(0, 0, 0, 0);
-    const inputDate = date
-      ? new Date(date as string)
-      : null;
+    const inputDate = date ? new Date(date as string) : null;
 
     const baseDate =
       inputDate && !isNaN(inputDate.getTime()) && inputDate >= currentDate
@@ -684,22 +688,42 @@ export const getAppointmentsByDate = async (req: Request, res: Response) => {
     const monthlyUpcomingAppointments = await Appointment.countDocuments({
       businessId,
       isDeleted: false,
-     ...(status ? {
-       status: { $in: [status] },
-     }:{
-       status: { $in: ["PENDING", "CONFIRMED", "CANCELLED"] },
-     }),
+      ...(status
+        ? {
+            status: { $in: [status] },
+          }
+        : {
+            status: {
+              $in: [
+                "PENDING",
+                "CONFIRMED",
+                "CANCELLED",
+                "NO_SHOW",
+                "COMPLETED",
+              ],
+            },
+          }),
       date: { $gte: filterStartDate, $lte: filterEndDate },
     });
 
     const weeklyUpcomingAppointments = await Appointment.countDocuments({
       businessId,
       isDeleted: false,
-     ...(status ? {
-       status: { $in: [status] },
-     }:{
-       status: { $in: ["PENDING", "CONFIRMED", "CANCELLED"] },
-     }),
+      ...(status
+        ? {
+            status: { $in: [status] },
+          }
+        : {
+            status: {
+              $in: [
+                "PENDING",
+                "CONFIRMED",
+                "CANCELLED",
+                "NO_SHOW",
+                "COMPLETED",
+              ],
+            },
+          }),
       date: { $gte: filterStartDate, $lte: filterEndDate },
     });
 
@@ -1246,7 +1270,7 @@ export const updateAppointment = async (req: Request, res: Response) => {
           $set: {
             ...appointmentData,
             status: status !== undefined ? status : existingAppointment.status,
-              notes: notes !== undefined ? notes : existingAppointment.notes,
+            notes: notes !== undefined ? notes : existingAppointment.notes,
             updatedBy: new mongoose.Types.ObjectId(userId),
           },
         },
